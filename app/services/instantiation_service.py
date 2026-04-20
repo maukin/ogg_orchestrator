@@ -12,7 +12,6 @@ from app.models.instantiation import InstantiationCommand
 from app.repositories.event_repo import EventRepository
 from app.repositories.registry_repo import RegistryRepository
 from app.services.state_machine_service import StateMachineService
-#from app.utils.scn import generate_simulated_scn
 from app.services.step_execution_policy_service import StepExecutionPolicyService
 from app.utils.error_events import mark_tables_step_error
 from app.utils.instantiation_scn import resolve_instantiation_scn
@@ -39,43 +38,46 @@ class InstantiationService:
         deployment_id: str,
         plan: DeploymentPlan,
         artifacts_dir: str | Path,
-        mode: str = "DRY_RUN",
+        action: str = "PLAN_ONLY",
     ) -> ExecutorResult | None:
+        if action == "SKIP":
+            return None
+
         commands: list[InstantiationCommand] = []
         instantiated_table_ids: list[str] = []
         command_by_table_id: dict[str, InstantiationCommand] = {}
         action_type_by_table_id: dict[str, str] = {}
 
-        for action in plan.actions:
-            if action.action_type not in PREPARE_ATTACH_ACTIONS:
+        for plan_action in plan.actions:
+            if plan_action.action_type not in PREPARE_ATTACH_ACTIONS:
                 continue
-            if not action.table_id:
+            if not plan_action.table_id:
                 continue
 
-            record = self.registry_repo.get_by_table_id(action.table_id)
+            record = self.registry_repo.get_by_table_id(plan_action.table_id)
             if record is None:
                 continue
 
             expected_state = (
                 TableState.CDC_CAPTURE_ATTACHED
-                if action.action_type == PLAN_CDC_ONLY
+                if plan_action.action_type == PLAN_CDC_ONLY
                 else TableState.INITIAL_LOAD_DONE
             )
+
             policy = self.step_policy.evaluate(
                 table_id=record.table_id,
                 current_state=record.state,
                 expected_state=expected_state,
                 success_state=TableState.INSTANTIATED,
             )
-
             if policy.decision == "SKIP":
                 continue
             if policy.decision == "INVALID_STATE":
                 continue
 
             reason = None
-            if isinstance(action.payload, dict):
-                reason = action.payload.get("reason")
+            if isinstance(plan_action.payload, dict):
+                reason = plan_action.payload.get("reason")
 
             command = self._build_instantiation_command(
                 table_id=record.table_id,
@@ -83,18 +85,19 @@ class InstantiationService:
                 source_table=record.source_table,
                 target_schema=record.target_schema,
                 target_table=record.target_table,
-                mode=mode,
+                action=action,
                 reason=reason,
             )
             commands.append(command)
             instantiated_table_ids.append(record.table_id)
             command_by_table_id[record.table_id] = command
-            action_type_by_table_id[record.table_id] = action.action_type
+            action_type_by_table_id[record.table_id] = plan_action.action_type
 
         if not commands:
             return None
 
         result = self._execute(commands=commands, artifacts_dir=artifacts_dir)
+
         if result.success is False:
             mark_tables_step_error(
                 registry_repo=self.registry_repo,
@@ -107,6 +110,12 @@ class InstantiationService:
             )
             return result
 
+        if action == "PLAN_ONLY":
+            return result
+
+        if action != "APPLY":
+            raise ValueError(f"Unsupported instantiation action: {action}")
+
         for table_id in instantiated_table_ids:
             record = self.registry_repo.get_by_table_id(table_id)
             if record is None:
@@ -115,6 +124,7 @@ class InstantiationService:
             cmd = command_by_table_id.get(table_id)
             if cmd is None:
                 continue
+
             action_type = action_type_by_table_id.get(table_id)
             if action_type == PLAN_CDC_ONLY and record.state != TableState.CDC_CAPTURE_ATTACHED:
                 continue
@@ -132,7 +142,10 @@ class InstantiationService:
                 instantiation_scn=instantiation_scn,
             )
 
-            self.state_machine.ensure_transition_allowed(record.state, TableState.INSTANTIATED)
+            self.state_machine.ensure_transition_allowed(
+                record.state,
+                TableState.INSTANTIATED,
+            )
             self.registry_repo.update_state(
                 table_id=table_id,
                 state=TableState.INSTANTIATED,
@@ -151,7 +164,7 @@ class InstantiationService:
                         {
                             "command_type": cmd.command_type,
                             "command_text": cmd.command_text,
-                            "mode": cmd.mode,
+                            "action": cmd.action,
                             "reason": cmd.reason,
                             "new_state": TableState.INSTANTIATED.value,
                             "instantiation_scn": instantiation_scn,
@@ -202,7 +215,7 @@ class InstantiationService:
         source_table: str,
         target_schema: str,
         target_table: str,
-        mode: str,
+        action: str,
         reason: str | None,
     ) -> InstantiationCommand:
         command_text = (
@@ -217,6 +230,6 @@ class InstantiationService:
             target_table=target_table,
             command_type="RECORD_INSTANTIATION",
             command_text=command_text,
-            mode=mode,
+            action=action,
             reason=reason,
         )

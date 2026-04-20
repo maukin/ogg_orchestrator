@@ -87,7 +87,6 @@ class DeploymentOrchestrator:
         self.group_bootstrap_planner_service = group_bootstrap_planner_service
         self.group_bootstrap_service = group_bootstrap_service
 
-
     def _run_group_bootstrap_actions(
         self,
         bootstrap_actions: list,
@@ -116,7 +115,9 @@ class DeploymentOrchestrator:
                 request=request,
                 artifacts_dir=artifacts_dir,
             )
-            step_results.append((f"bootstrap_group:{request.group_type}:{request.group_name}", result))
+            step_results.append(
+                (f"bootstrap_group:{request.group_type}:{request.group_name}", result)
+            )
 
             if not result.success:
                 raise ValueError(
@@ -133,12 +134,12 @@ class DeploymentOrchestrator:
         pipeline_id: str | None,
         desired_configs: list[DesiredTableConfig],
         artifacts_dir: str | Path | None = None,
-        prepare_source_mode: str = "DRY_RUN",
-        attach_extract_mode: str = "DRY_RUN",
-        initial_load_mode: str = "DRY_RUN",
-        instantiation_mode: str = "DRY_RUN",
-        attach_replicat_mode: str = "DRY_RUN",
-        activation_mode: str = "DRY_RUN",
+        prepare_source_action: str = "PLAN_ONLY",
+        attach_extract_action: str = "PLAN_ONLY",
+        initial_load_action: str = "PLAN_ONLY",
+        instantiation_action: str = "PLAN_ONLY",
+        attach_replicat_action: str = "PLAN_ONLY",
+        activation_action: str = "PLAN_ONLY",
     ) -> DeploymentPlan:
         current_registry = self.registry_repo.list_all()
         available_groups = self.group_repo.list_active_groups(environment_name)
@@ -168,7 +169,9 @@ class DeploymentOrchestrator:
         # 3. Выполняем bootstrap, если есть что создавать
         if bootstrap_actions:
             if artifacts_dir is None:
-                raise ValueError("artifacts_dir is required when bootstrap of groups is needed.")
+                raise ValueError(
+                    "artifacts_dir is required when bootstrap of groups is needed."
+                )
             self._run_group_bootstrap_actions(
                 bootstrap_actions=bootstrap_actions,
                 artifacts_dir=artifacts_dir,
@@ -239,7 +242,7 @@ class DeploymentOrchestrator:
                 deployment_id=deployment_id,
                 plan=plan,
                 artifacts_dir=artifacts_dir,
-                mode=prepare_source_mode,
+                action=prepare_source_action,
             )
             step_results.append(("prepare_source", prepare_result))
 
@@ -278,7 +281,11 @@ class DeploymentOrchestrator:
                     table_ids=affected_table_ids,
                     deployment_id=deployment_id,
                     step_name=f"attach_extract_probe:{group_name}",
-                    error_code=getattr(extract_probe_results[group_name], "error_code", None),
+                    error_code=getattr(
+                        extract_probe_results[group_name],
+                        "error_code",
+                        None,
+                    ),
                     error_message=getattr(
                         extract_probe_results[group_name],
                         "error_message",
@@ -295,7 +302,10 @@ class DeploymentOrchestrator:
                         filtered_actions.append(action)
                         continue
 
-                    cfg = next((x for x in desired_configs if x.table_id == action.table_id), None)
+                    cfg = next(
+                        (x for x in desired_configs if x.table_id == action.table_id),
+                        None,
+                    )
                     if cfg is None:
                         filtered_actions.append(action)
                         continue
@@ -318,7 +328,7 @@ class DeploymentOrchestrator:
                 deployment_id=deployment_id,
                 plan=filtered_plan,
                 artifacts_dir=artifacts_dir,
-                mode=attach_extract_mode,
+                action=attach_extract_action,
             )
             step_results.append(("attach_extract", extract_result))
 
@@ -327,7 +337,7 @@ class DeploymentOrchestrator:
                 deployment_id=deployment_id,
                 plan=plan,
                 artifacts_dir=artifacts_dir,
-                mode=initial_load_mode,
+                action=initial_load_action,
             )
             step_results.append(("initial_load", initial_load_result))
 
@@ -336,7 +346,7 @@ class DeploymentOrchestrator:
                 deployment_id=deployment_id,
                 plan=plan,
                 artifacts_dir=artifacts_dir,
-                mode=instantiation_mode,
+                action=instantiation_action,
             )
             step_results.append(("instantiation", instantiation_result))
 
@@ -354,7 +364,9 @@ class DeploymentOrchestrator:
                     artifacts_dir=artifacts_dir,
                 )
                 replicat_probe_results[replicat_group] = probe_result
-                step_results.append((f"probe_replicat_status:{replicat_group}", probe_result))
+                step_results.append(
+                    (f"probe_replicat_status:{replicat_group}", probe_result)
+                )
 
         failed_replicat_groups = {
             group_name
@@ -375,7 +387,11 @@ class DeploymentOrchestrator:
                     table_ids=affected_table_ids,
                     deployment_id=deployment_id,
                     step_name=f"attach_replicat_probe:{group_name}",
-                    error_code=getattr(replicat_probe_results[group_name], "error_code", None),
+                    error_code=getattr(
+                        replicat_probe_results[group_name],
+                        "error_code",
+                        None,
+                    ),
                     error_message=getattr(
                         replicat_probe_results[group_name],
                         "error_message",
@@ -392,7 +408,10 @@ class DeploymentOrchestrator:
                         filtered_actions.append(action)
                         continue
 
-                    cfg = next((x for x in desired_configs if x.table_id == action.table_id), None)
+                    cfg = next(
+                        (x for x in desired_configs if x.table_id == action.table_id),
+                        None,
+                    )
                     if cfg is None:
                         filtered_actions.append(action)
                         continue
@@ -415,7 +434,7 @@ class DeploymentOrchestrator:
                 deployment_id=deployment_id,
                 plan=filtered_plan,
                 artifacts_dir=artifacts_dir,
-                mode=attach_replicat_mode,
+                action=attach_replicat_action,
             )
             step_results.append(("attach_replicat", replicat_result))
 
@@ -424,7 +443,7 @@ class DeploymentOrchestrator:
                 deployment_id=deployment_id,
                 plan=plan,
                 artifacts_dir=artifacts_dir,
-                mode=activation_mode,
+                action=activation_action,
             )
             step_results.append(("activation", activation_result))
 

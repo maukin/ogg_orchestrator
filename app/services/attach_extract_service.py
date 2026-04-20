@@ -38,20 +38,22 @@ class AttachExtractService:
         deployment_id: str,
         plan: DeploymentPlan,
         artifacts_dir: str | Path,
-        mode: str = "DRY_RUN",
+        action: str = "PLAN_ONLY",
     ) -> AttachExtractExecutionResult | None:
+        if action == "SKIP":
+            return None
+
         commands: list[AttachExtractCommand] = []
         target_table_ids: list[str] = []
-
         extract_fragment_dir = Path(artifacts_dir) / "cdc" / "extract"
 
-        for action in plan.actions:
-            if action.action_type not in PREPARE_ATTACH_ACTIONS:
+        for plan_action in plan.actions:
+            if plan_action.action_type not in PREPARE_ATTACH_ACTIONS:
                 continue
-            if not action.table_id:
+            if not plan_action.table_id:
                 continue
 
-            record = self.registry_repo.get_by_table_id(action.table_id)
+            record = self.registry_repo.get_by_table_id(plan_action.table_id)
             if record is None:
                 continue
 
@@ -61,19 +63,21 @@ class AttachExtractService:
                 expected_state=TableState.PREPARED,
                 success_state=TableState.CDC_CAPTURE_ATTACHED,
             )
-
             if policy.decision == "SKIP":
                 continue
             if policy.decision == "INVALID_STATE":
                 continue
+
             if not record.desired_extract_group:
                 continue
 
             reason = None
-            if isinstance(action.payload, dict):
-                reason = action.payload.get("reason")
+            if isinstance(plan_action.payload, dict):
+                reason = plan_action.payload.get("reason")
 
-            fragment_path = extract_fragment_dir / f"{record.desired_extract_group}.tables.prm"
+            fragment_path = (
+                extract_fragment_dir / f"{record.desired_extract_group}.tables.prm"
+            )
 
             command = self._build_command(
                 table_id=record.table_id,
@@ -81,7 +85,7 @@ class AttachExtractService:
                 source_table=record.source_table,
                 extract_group=record.desired_extract_group,
                 fragment_path=str(fragment_path),
-                mode=mode,
+                action=action,
                 reason=reason,
             )
             commands.append(command)
@@ -103,6 +107,12 @@ class AttachExtractService:
                 error_message=result.error_message or "Attach extract executor failed.",
             )
             return result
+
+        if action == "PLAN_ONLY":
+            return result
+
+        if action != "APPLY":
+            raise ValueError(f"Unsupported attach_extract action: {action}")
 
         for table_id in target_table_ids:
             record = self.registry_repo.get_by_table_id(table_id)
@@ -136,9 +146,11 @@ class AttachExtractService:
                         {
                             "extract_group": cmd.extract_group,
                             "fragment_path": cmd.fragment_path,
-                            "mode": cmd.mode,
+                            "action": cmd.action,
                             "reason": cmd.reason,
-                            "attach_extract_result": attach_extract_result_to_payload(result),
+                            "attach_extract_result": attach_extract_result_to_payload(
+                                result
+                            ),
                         },
                         ensure_ascii=False,
                     ),
@@ -160,10 +172,12 @@ class AttachExtractService:
                         {
                             "extract_group": cmd.extract_group,
                             "fragment_path": cmd.fragment_path,
-                            "mode": cmd.mode,
+                            "action": cmd.action,
                             "reason": cmd.reason,
                             "new_state": TableState.CDC_CAPTURE_ATTACHED.value,
-                            "attach_extract_result": attach_extract_result_to_payload(result),
+                            "attach_extract_result": attach_extract_result_to_payload(
+                                result
+                            ),
                         },
                         ensure_ascii=False,
                     ),
@@ -182,7 +196,7 @@ class AttachExtractService:
         source_table: str,
         extract_group: str,
         fragment_path: str,
-        mode: str,
+        action: str,
         reason: str | None,
     ) -> AttachExtractCommand:
         return AttachExtractCommand(
@@ -193,6 +207,6 @@ class AttachExtractService:
             fragment_path=fragment_path,
             command_type="ATTACH_EXTRACT",
             command_text=f"attach_extract --group {extract_group} --fragment {fragment_path}",
-            mode=mode,
+            action=action,
             reason=reason,
         )

@@ -37,18 +37,21 @@ class ActivationService:
         deployment_id: str,
         plan: DeploymentPlan,
         artifacts_dir: str | Path,
-        mode: str = "DRY_RUN",
+        action: str = "PLAN_ONLY",
     ) -> ExecutorResult | None:
+        if action == "SKIP":
+            return None
+
         commands: list[ActivationCommand] = []
         target_table_ids: list[str] = []
 
-        for action in plan.actions:
-            if action.action_type not in CDC_APPLY_ACTIONS:
+        for plan_action in plan.actions:
+            if plan_action.action_type not in CDC_APPLY_ACTIONS:
                 continue
-            if not action.table_id:
+            if not plan_action.table_id:
                 continue
 
-            record = self.registry_repo.get_by_table_id(action.table_id)
+            record = self.registry_repo.get_by_table_id(plan_action.table_id)
             if record is None:
                 continue
 
@@ -58,15 +61,14 @@ class ActivationService:
                 expected_state=TableState.CDC_APPLY_ATTACHED,
                 success_state=TableState.ACTIVE,
             )
-
             if policy.decision == "SKIP":
                 continue
             if policy.decision == "INVALID_STATE":
                 continue
 
             reason = None
-            if isinstance(action.payload, dict):
-                reason = action.payload.get("reason")
+            if isinstance(plan_action.payload, dict):
+                reason = plan_action.payload.get("reason")
 
             self.registry_repo.update_validation_status(
                 table_id=record.table_id,
@@ -84,7 +86,7 @@ class ActivationService:
                     event_ts=None,
                     payload_json=json.dumps(
                         {
-                            "mode": mode,
+                            "action": action,
                             "reason": reason,
                             "current_state": record.state.value,
                             "validation_status": ValidationStatus.PENDING.value,
@@ -103,7 +105,7 @@ class ActivationService:
                 source_table=record.source_table,
                 target_schema=record.target_schema,
                 target_table=record.target_table,
-                mode=mode,
+                action=action,
                 reason=reason,
             )
             commands.append(command)
@@ -113,11 +115,12 @@ class ActivationService:
             return None
 
         result = self._execute(commands=commands, artifacts_dir=artifacts_dir)
+
         if result.success is False:
             self._mark_validation_failed(
                 deployment_id=deployment_id,
                 table_ids=target_table_ids,
-                mode=mode,
+                action=action,
                 result=result,
             )
             mark_tables_step_error(
@@ -130,6 +133,12 @@ class ActivationService:
                 error_message=result.error_message or "Activation executor failed.",
             )
             return result
+
+        if action == "PLAN_ONLY":
+            return result
+
+        if action != "APPLY":
+            raise ValueError(f"Unsupported activation action: {action}")
 
         for table_id in target_table_ids:
             record = self.registry_repo.get_by_table_id(table_id)
@@ -154,7 +163,7 @@ class ActivationService:
                     event_ts=None,
                     payload_json=json.dumps(
                         {
-                            "mode": mode,
+                            "action": action,
                             "validation_result": "PASSED",
                             "validation_status": ValidationStatus.PASSED.value,
                         },
@@ -191,7 +200,7 @@ class ActivationService:
                         {
                             "command_type": cmd.command_type,
                             "command_text": cmd.command_text,
-                            "mode": cmd.mode,
+                            "action": cmd.action,
                             "reason": cmd.reason,
                             "new_state": TableState.ACTIVE.value,
                             "validation_status": ValidationStatus.PASSED.value,
@@ -239,7 +248,7 @@ class ActivationService:
         self,
         deployment_id: str,
         table_ids: list[str],
-        mode: str,
+        action: str,
         result: ExecutorResult,
     ) -> None:
         for table_id in table_ids:
@@ -263,7 +272,7 @@ class ActivationService:
                     event_ts=None,
                     payload_json=json.dumps(
                         {
-                            "mode": mode,
+                            "action": action,
                             "validation_result": "FAILED",
                             "validation_status": ValidationStatus.FAILED.value,
                             "error_code": result.error_code,
@@ -284,7 +293,7 @@ class ActivationService:
         source_table: str,
         target_schema: str,
         target_table: str,
-        mode: str,
+        action: str,
         reason: str | None,
     ) -> ActivationCommand:
         command_text = (
@@ -299,6 +308,6 @@ class ActivationService:
             target_table=target_table,
             command_type="VALIDATE_AND_ACTIVATE",
             command_text=command_text,
-            mode=mode,
+            action=action,
             reason=reason,
         )

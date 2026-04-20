@@ -38,20 +38,22 @@ class AttachReplicatService:
         deployment_id: str,
         plan: DeploymentPlan,
         artifacts_dir: str | Path,
-        mode: str = "DRY_RUN",
+        action: str = "PLAN_ONLY",
     ) -> AttachReplicatExecutionResult | None:
+        if action == "SKIP":
+            return None
+
         commands: list[AttachReplicatCommand] = []
         target_table_ids: list[str] = []
-
         replicat_fragment_dir = Path(artifacts_dir) / "cdc" / "replicat"
 
-        for action in plan.actions:
-            if action.action_type not in CDC_APPLY_ACTIONS:
+        for plan_action in plan.actions:
+            if plan_action.action_type not in CDC_APPLY_ACTIONS:
                 continue
-            if not action.table_id:
+            if not plan_action.table_id:
                 continue
 
-            record = self.registry_repo.get_by_table_id(action.table_id)
+            record = self.registry_repo.get_by_table_id(plan_action.table_id)
             if record is None:
                 continue
 
@@ -61,19 +63,21 @@ class AttachReplicatService:
                 expected_state=TableState.INSTANTIATED,
                 success_state=TableState.CDC_APPLY_ATTACHED,
             )
-
             if policy.decision == "SKIP":
                 continue
             if policy.decision == "INVALID_STATE":
                 continue
+
             if not record.desired_replicat_group:
                 continue
 
             reason = None
-            if isinstance(action.payload, dict):
-                reason = action.payload.get("reason")
+            if isinstance(plan_action.payload, dict):
+                reason = plan_action.payload.get("reason")
 
-            fragment_path = replicat_fragment_dir / f"{record.desired_replicat_group}.maps.prm"
+            fragment_path = (
+                replicat_fragment_dir / f"{record.desired_replicat_group}.maps.prm"
+            )
 
             command = self._build_command(
                 table_id=record.table_id,
@@ -83,7 +87,7 @@ class AttachReplicatService:
                 target_table=record.target_table,
                 replicat_group=record.desired_replicat_group,
                 fragment_path=str(fragment_path),
-                mode=mode,
+                action=action,
                 reason=reason,
             )
             commands.append(command)
@@ -105,6 +109,12 @@ class AttachReplicatService:
                 error_message=result.error_message or "Attach replicat executor failed.",
             )
             return result
+
+        if action == "PLAN_ONLY":
+            return result
+
+        if action != "APPLY":
+            raise ValueError(f"Unsupported attach_replicat action: {action}")
 
         for table_id in target_table_ids:
             record = self.registry_repo.get_by_table_id(table_id)
@@ -138,9 +148,11 @@ class AttachReplicatService:
                         {
                             "replicat_group": cmd.replicat_group,
                             "fragment_path": cmd.fragment_path,
-                            "mode": cmd.mode,
+                            "action": cmd.action,
                             "reason": cmd.reason,
-                            "attach_replicat_result": attach_replicat_result_to_payload(result),
+                            "attach_replicat_result": attach_replicat_result_to_payload(
+                                result
+                            ),
                         },
                         ensure_ascii=False,
                     ),
@@ -162,10 +174,12 @@ class AttachReplicatService:
                         {
                             "replicat_group": cmd.replicat_group,
                             "fragment_path": cmd.fragment_path,
-                            "mode": cmd.mode,
+                            "action": cmd.action,
                             "reason": cmd.reason,
                             "new_state": TableState.CDC_APPLY_ATTACHED.value,
-                            "attach_replicat_result": attach_replicat_result_to_payload(result),
+                            "attach_replicat_result": attach_replicat_result_to_payload(
+                                result
+                            ),
                         },
                         ensure_ascii=False,
                     ),
@@ -186,7 +200,7 @@ class AttachReplicatService:
         target_table: str,
         replicat_group: str,
         fragment_path: str,
-        mode: str,
+        action: str,
         reason: str | None,
     ) -> AttachReplicatCommand:
         return AttachReplicatCommand(
@@ -199,6 +213,6 @@ class AttachReplicatService:
             fragment_path=fragment_path,
             command_type="ATTACH_REPLICAT",
             command_text=f"attach_replicat --group {replicat_group} --fragment {fragment_path}",
-            mode=mode,
+            action=action,
             reason=reason,
         )

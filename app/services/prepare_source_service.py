@@ -13,10 +13,10 @@ from app.repositories.event_repo import EventRepository
 from app.repositories.registry_repo import RegistryRepository
 from app.services.state_machine_service import StateMachineService
 from app.services.step_execution_policy_service import StepExecutionPolicyService
-from app.utils.executor_result_payload import executor_result_to_payload
-from app.utils.scn import generate_simulated_scn
 from app.utils.error_events import mark_tables_step_error
+from app.utils.executor_result_payload import executor_result_to_payload
 from app.utils.plan_actions import PREPARE_ATTACH_ACTIONS
+from app.utils.scn import generate_simulated_scn
 
 
 class PrepareSourceService:
@@ -39,18 +39,21 @@ class PrepareSourceService:
         deployment_id: str,
         plan: DeploymentPlan,
         artifacts_dir: str | Path,
-        mode: str = "DRY_RUN",
+        action: str = "PLAN_ONLY",
     ) -> ExecutorResult | None:
+        if action == "SKIP":
+            return None
+
         commands: list[SourcePrepareCommand] = []
         prepared_table_ids: list[str] = []
 
-        for action in plan.actions:
-            if action.action_type not in PREPARE_ATTACH_ACTIONS:
+        for plan_action in plan.actions:
+            if plan_action.action_type not in PREPARE_ATTACH_ACTIONS:
                 continue
-            if not action.table_id:
+            if not plan_action.table_id:
                 continue
 
-            record = self.registry_repo.get_by_table_id(action.table_id)
+            record = self.registry_repo.get_by_table_id(plan_action.table_id)
             if record is None:
                 continue
 
@@ -60,15 +63,14 @@ class PrepareSourceService:
                 expected_state=TableState.PLANNED,
                 success_state=TableState.PREPARED,
             )
-
             if policy.decision == "SKIP":
                 continue
             if policy.decision == "INVALID_STATE":
                 continue
 
             reason = None
-            if isinstance(action.payload, dict):
-                reason = action.payload.get("reason")
+            if isinstance(plan_action.payload, dict):
+                reason = plan_action.payload.get("reason")
 
             self.event_repo.add_event(
                 TableEvent(
@@ -82,7 +84,7 @@ class PrepareSourceService:
                         {
                             "source_schema": record.source_schema,
                             "source_table": record.source_table,
-                            "mode": mode,
+                            "action": action,
                             "reason": reason,
                         },
                         ensure_ascii=False,
@@ -97,7 +99,7 @@ class PrepareSourceService:
                 table_id=record.table_id,
                 source_schema=record.source_schema,
                 source_table=record.source_table,
-                mode=mode,
+                action=action,
                 reason=reason,
             )
             commands.append(command)
@@ -122,6 +124,12 @@ class PrepareSourceService:
                 error_message=result.error_message or "Prepare source executor failed.",
             )
             return result
+
+        if action == "PLAN_ONLY":
+            return result
+
+        if action != "APPLY":
+            raise ValueError(f"Unsupported prepare_source action: {action}")
 
         for table_id in prepared_table_ids:
             record = self.registry_repo.get_by_table_id(table_id)
@@ -164,7 +172,7 @@ class PrepareSourceService:
                         {
                             "command_type": cmd.command_type,
                             "command_text": cmd.command_text,
-                            "mode": cmd.mode,
+                            "action": cmd.action,
                             "reason": cmd.reason,
                             "new_state": TableState.PREPARED.value,
                             "prepared_for_instantiation": True,
@@ -186,7 +194,7 @@ class PrepareSourceService:
         table_id: str,
         source_schema: str,
         source_table: str,
-        mode: str,
+        action: str,
         reason: str | None,
     ) -> SourcePrepareCommand:
         command_text = f"ADD TRANDATA {source_schema}.{source_table};"
@@ -196,6 +204,6 @@ class PrepareSourceService:
             source_table=source_table,
             command_type="ADD_TRANDATA",
             command_text=command_text,
-            mode=mode,
+            action=action,
             reason=reason,
         )

@@ -7,7 +7,6 @@ from app.executors.initial_load_executor import InitialLoadExecutor
 from app.models.deployment import DeploymentPlan
 from app.models.enums import EventStatus, EventType, TableState
 from app.models.events import TableEvent
-from app.models.executor import ExecutorResult
 from app.models.initial_load import InitialLoadCommand
 from app.models.initial_load_result import InitialLoadExecutionResult
 from app.repositories.event_repo import EventRepository
@@ -39,18 +38,21 @@ class InitialLoadService:
         deployment_id: str,
         plan: DeploymentPlan,
         artifacts_dir: str | Path,
-        mode: str = "DRY_RUN",
+        action: str = "PLAN_ONLY",
     ) -> InitialLoadExecutionResult | None:
+        if action == "SKIP":
+            return None
+
         commands: list[InitialLoadCommand] = []
         target_table_ids: list[str] = []
 
-        for action in plan.actions:
-            if action.action_type not in INITIAL_LOAD_ACTIONS:
+        for plan_action in plan.actions:
+            if plan_action.action_type not in INITIAL_LOAD_ACTIONS:
                 continue
-            if not action.table_id:
+            if not plan_action.table_id:
                 continue
 
-            record = self.registry_repo.get_by_table_id(action.table_id)
+            record = self.registry_repo.get_by_table_id(plan_action.table_id)
             if record is None:
                 continue
 
@@ -60,7 +62,6 @@ class InitialLoadService:
                 expected_state=TableState.CDC_CAPTURE_ATTACHED,
                 success_state=TableState.INITIAL_LOAD_DONE,
             )
-
             if policy.decision == "SKIP":
                 continue
             if policy.decision == "INVALID_STATE":
@@ -68,19 +69,20 @@ class InitialLoadService:
 
             reason = None
             load_method = None
-            if isinstance(action.payload, dict):
-                reason = action.payload.get("reason")
-                load_method = action.payload.get("desired_load_method")
+            if isinstance(plan_action.payload, dict):
+                reason = plan_action.payload.get("reason")
+                load_method = plan_action.payload.get("desired_load_method")
 
-            self.state_machine.ensure_transition_allowed(
-                TableState.CDC_CAPTURE_ATTACHED,
-                TableState.INITIAL_LOAD_PENDING,
-            )
-            self.registry_repo.update_state(
-                table_id=record.table_id,
-                state=TableState.INITIAL_LOAD_PENDING,
-                deployment_id=deployment_id,
-            )
+            if action == "APPLY":
+                self.state_machine.ensure_transition_allowed(
+                    TableState.CDC_CAPTURE_ATTACHED,
+                    TableState.INITIAL_LOAD_PENDING,
+                )
+                self.registry_repo.update_state(
+                    table_id=record.table_id,
+                    state=TableState.INITIAL_LOAD_PENDING,
+                    deployment_id=deployment_id,
+                )
 
             command = self._build_initial_load_command(
                 table_id=record.table_id,
@@ -93,7 +95,7 @@ class InitialLoadService:
                 replicat_group=record.desired_replicat_group,
                 registration_scn=record.registration_scn,
                 metadata_file=record.metadata_file,
-                mode=mode,
+                action=action,
                 reason=reason,
             )
             commands.append(command)
@@ -104,12 +106,14 @@ class InitialLoadService:
 
         result = self.executor.execute(commands=commands, artifacts_dir=artifacts_dir)
 
-        for table_id in target_table_ids:
-            self.registry_repo.set_instantiation_candidate_scn(
-                table_id=table_id,
-                deployment_id=deployment_id,
-                instantiation_candidate_scn=result.instantiation_candidate_scn,
-            )
+        # Артефакт/результат initial load может содержать кандидатный SCN даже в PLAN_ONLY.
+        if result.instantiation_candidate_scn is not None:
+            for table_id in target_table_ids:
+                self.registry_repo.set_instantiation_candidate_scn(
+                    table_id=table_id,
+                    deployment_id=deployment_id,
+                    instantiation_candidate_scn=result.instantiation_candidate_scn,
+                )
 
         if result.success is False:
             mark_tables_step_error(
@@ -122,6 +126,12 @@ class InitialLoadService:
                 error_message=result.error_message or "Initial load executor failed.",
             )
             return result
+
+        if action == "PLAN_ONLY":
+            return result
+
+        if action != "APPLY":
+            raise ValueError(f"Unsupported initial_load action: {action}")
 
         for table_id in target_table_ids:
             record = self.registry_repo.get_by_table_id(table_id)
@@ -149,7 +159,7 @@ class InitialLoadService:
                     event_ts=None,
                     payload_json=json.dumps(
                         {
-                            "mode": mode,
+                            "action": action,
                             "new_state": TableState.INITIAL_LOAD_RUNNING.value,
                             "initial_load_result": initial_load_result_to_payload(result),
                         },
@@ -187,7 +197,7 @@ class InitialLoadService:
                         {
                             "command_type": cmd.command_type,
                             "command_text": cmd.command_text,
-                            "mode": cmd.mode,
+                            "action": cmd.action,
                             "reason": cmd.reason,
                             "new_state": TableState.INITIAL_LOAD_DONE.value,
                             "initial_load_result": initial_load_result_to_payload(result),
@@ -214,7 +224,7 @@ class InitialLoadService:
         replicat_group: str | None,
         registration_scn: int | None,
         metadata_file: str | None,
-        mode: str,
+        action: str,
         reason: str | None,
     ) -> InitialLoadCommand:
         command_text = (
@@ -234,6 +244,6 @@ class InitialLoadService:
             metadata_file=metadata_file,
             command_type="INITIAL_LOAD",
             command_text=command_text,
-            mode=mode,
+            action=action,
             reason=reason,
         )

@@ -13,5 +13,5 @@ class AttachReplicatCommand:
     fragment_path: str
     command_type: str
     command_text: str
-    mode: str
+    action: str
     reason: Optional[str]

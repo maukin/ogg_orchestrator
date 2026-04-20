@@ -16,5 +16,5 @@ class InitialLoadCommand:
     metadata_file: Optional[str]
     command_type: str
     command_text: str
-    mode: str
+    action: str
     reason: Optional[str]

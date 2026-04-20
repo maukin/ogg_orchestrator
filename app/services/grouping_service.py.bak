@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+from collections import Counter
+
+from app.models.groups import GroupConfig
+from app.models.registry import DesiredTableConfig, TableRegistryRecord
+
+
+class GroupValidationError(Exception):
+    pass
+
+
+class GroupingService:
+    def validate_desired_groups(
+        self,
+        desired_configs,
+        current_registry,
+        available_groups,
+        strict_existing_groups: bool = True,
+    ) -> None:
+        group_index = {(g.group_name, g.group_type): g for g in available_groups}
+
+        current_extract_counts = Counter(
+            rec.actual_extract_group for rec in current_registry if rec.actual_extract_group
+        )
+        current_replicat_counts = Counter(
+            rec.actual_replicat_group for rec in current_registry if rec.actual_replicat_group
+        )
+
+        errors: list[str] = []
+
+        for cfg in desired_configs:
+            if not cfg.desired_enabled:
+                continue
+
+            if not cfg.desired_extract_group:
+                errors.append(f"{cfg.table_id}: desired_extract_group is required for enabled CDC")
+            if not cfg.desired_replicat_group:
+                errors.append(f"{cfg.table_id}: desired_replicat_group is required for enabled CDC")
+
+            if cfg.desired_extract_group:
+                key = (cfg.desired_extract_group, "extract")
+                if key not in group_index:
+                    errors.append(f"{cfg.table_id}: extract group not found: {cfg.desired_extract_group}")
+
+            if cfg.desired_replicat_group:
+                key = (cfg.desired_replicat_group, "replicat")
+                if key not in group_index:
+                    errors.append(f"{cfg.table_id}: replicat group not found: {cfg.desired_replicat_group}")
+
+        for group in available_groups:
+            if group.max_tables is None:
+                continue
+
+            if group.group_type == "extract":
+                used = current_extract_counts.get(group.group_name, 0)
+            elif group.group_type == "replicat":
+                used = current_replicat_counts.get(group.group_name, 0)
+            else:
+                continue
+
+            if used > group.max_tables:
+                errors.append(
+                    f"group {group.group_name} exceeds capacity: used={used}, max={group.max_tables}"
+                )
+
+        if errors:
+            raise GroupValidationError("\n".join(errors))
+            
+    def find_missing_groups(
+        self,
+        desired_configs: list[DesiredTableConfig],
+        available_groups: list[GroupConfig],
+    ) -> dict[str, set[str]]:
+        existing_extract_groups = {
+            g.group_name for g in available_groups if g.group_type == "extract"
+        }
+        existing_replicat_groups = {
+            g.group_name for g in available_groups if g.group_type == "replicat"
+        }
+
+        missing_extracts: set[str] = set()
+        missing_replicats: set[str] = set()
+
+        for cfg in desired_configs:
+            if not cfg.desired_enabled:
+                continue
+
+            if cfg.desired_extract_group and cfg.desired_extract_group not in existing_extract_groups:
+                missing_extracts.add(cfg.desired_extract_group)
+
+            if cfg.desired_replicat_group and cfg.desired_replicat_group not in existing_replicat_groups:
+                missing_replicats.add(cfg.desired_replicat_group)
+
+        return {
+            "extract": missing_extracts,
+            "replicat": missing_replicats,
+        }

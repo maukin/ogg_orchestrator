@@ -1,0 +1,20 @@
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass(frozen=True)
+class AttachExtractExecutionResult:
+    success: bool
+    executed_count: int
+    skipped_count: int
+    group_name: Optional[str] = None
+    applied_tables_count: Optional[int] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    raw_output: Optional[str] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    request_artifact: Optional[str] = None
+    response_artifact: Optional[str] = None
+    restart_performed: Optional[bool] = None
+    rollback_performed: Optional[bool] = None

@@ -1,0 +1,174 @@
+from __future__ import annotations
+
+from app.models.groups import GroupConfig
+from app.models.registry import DesiredTableConfig
+from app.services.group_bootstrap_planner_service import GroupBootstrapPlannerService
+from app.services.ogg_base_config_factory import OGGBaseConfigFactory
+
+
+def _cfg(
+    table_id: str,
+    extract_group: str | None,
+    replicat_group: str | None,
+    enabled: bool = True,
+) -> DesiredTableConfig:
+    return DesiredTableConfig(
+        source_system="SRCDB",
+        source_pdb="SRCPDB",
+        source_schema="SRC",
+        source_table=f"T_{table_id}",
+        target_system="TGTDB",
+        target_pdb="TGPDB",
+        target_schema="DDS",
+        target_table=f"T_{table_id}",
+        desired_enabled=enabled,
+        desired_replication_mode="INITIAL_PLUS_CDC",
+        desired_extract_group=extract_group,
+        desired_replicat_group=replicat_group,
+        desired_load_method="DATAPUMP",
+        desired_priority="NORMAL",
+        desired_size_class="SMALL",
+        primary_key=["ID"],
+        metadata_file=f"metadata/{table_id}.json",
+        table_id=table_id,
+    )
+
+
+def _group(name: str, group_type: str) -> GroupConfig:
+    return GroupConfig(
+        group_name=name,
+        group_type=group_type,
+        environment_name="dev",
+        source_system="SRCDB",
+        target_system="TGTDB",
+        max_tables=None,
+        priority_class=None,
+        active_flag=True,
+        notes=None,
+    )
+
+
+def _planner() -> GroupBootstrapPlannerService:
+    return GroupBootstrapPlannerService(
+        config_factory=OGGBaseConfigFactory(),
+        extract_credential_alias="GGADMIN",
+        replicat_credential_alias="TARGET_DB_CONN",
+        extract_credential_domain="OracleGoldenGate",
+        replicat_credential_domain=None,
+        default_trail_name="lt",
+        default_extract_integrated=True,
+    )
+
+
+def test_build_bootstrap_actions_for_missing_groups():
+    planner = _planner()
+
+    desired_configs = [
+        _cfg("T1", "EXT_NEW", "REP_NEW"),
+    ]
+    available_groups: list[GroupConfig] = []
+
+    actions = planner.build_bootstrap_actions(
+        environment_name="dev",
+        desired_configs=desired_configs,
+        available_groups=available_groups,
+    )
+
+    assert len(actions) == 2
+
+    action_types = {a.action_type for a in actions}
+    assert action_types == {"BOOTSTRAP_EXTRACT_GROUP", "BOOTSTRAP_REPLICAT_GROUP"}
+
+    extract_action = next(a for a in actions if a.action_type == "BOOTSTRAP_EXTRACT_GROUP")
+    replicat_action = next(a for a in actions if a.action_type == "BOOTSTRAP_REPLICAT_GROUP")
+
+    assert extract_action.group_name == "EXT_NEW"
+    assert extract_action.payload["group_name"] == "EXT_NEW"
+    assert extract_action.payload["group_type"] == "extract"
+    assert extract_action.payload["credential_alias"] == "GGADMIN"
+    assert extract_action.payload["trail_name"] == "lt"
+    assert "EXTRACT EXT_NEW" in extract_action.payload["base_config_lines"]
+
+    assert replicat_action.group_name == "REP_NEW"
+    assert replicat_action.payload["group_name"] == "REP_NEW"
+    assert replicat_action.payload["group_type"] == "replicat"
+    assert replicat_action.payload["credential_alias"] == "TARGET_DB_CONN"
+    assert "REPLICAT REP_NEW" in replicat_action.payload["base_config_lines"]
+
+
+def test_build_bootstrap_actions_does_not_duplicate_groups():
+    planner = _planner()
+
+    desired_configs = [
+        _cfg("T1", "EXT_SHARED", "REP_SHARED"),
+        _cfg("T2", "EXT_SHARED", "REP_SHARED"),
+    ]
+    available_groups: list[GroupConfig] = []
+
+    actions = planner.build_bootstrap_actions(
+        environment_name="dev",
+        desired_configs=desired_configs,
+        available_groups=available_groups,
+    )
+
+    assert len(actions) == 2
+    assert sum(1 for a in actions if a.action_type == "BOOTSTRAP_EXTRACT_GROUP") == 1
+    assert sum(1 for a in actions if a.action_type == "BOOTSTRAP_REPLICAT_GROUP") == 1
+
+
+def test_build_bootstrap_actions_ignores_disabled_tables():
+    planner = _planner()
+
+    desired_configs = [
+        _cfg("T1", "EXT_DISABLED", "REP_DISABLED", enabled=False),
+    ]
+    available_groups: list[GroupConfig] = []
+
+    actions = planner.build_bootstrap_actions(
+        environment_name="dev",
+        desired_configs=desired_configs,
+        available_groups=available_groups,
+    )
+
+    assert actions == []
+
+
+def test_build_bootstrap_actions_skips_existing_groups():
+    planner = _planner()
+
+    desired_configs = [
+        _cfg("T1", "EXT_EXISTS", "REP_EXISTS"),
+    ]
+    available_groups = [
+        _group("EXT_EXISTS", "extract"),
+        _group("REP_EXISTS", "replicat"),
+    ]
+
+    actions = planner.build_bootstrap_actions(
+        environment_name="dev",
+        desired_configs=desired_configs,
+        available_groups=available_groups,
+    )
+
+    assert actions == []
+
+
+def test_build_bootstrap_actions_bootstraps_only_missing_side():
+    planner = _planner()
+
+    desired_configs = [
+        _cfg("T1", "EXT_EXISTS", "REP_NEW"),
+    ]
+    available_groups = [
+        _group("EXT_EXISTS", "extract"),
+    ]
+
+    actions = planner.build_bootstrap_actions(
+        environment_name="dev",
+        desired_configs=desired_configs,
+        available_groups=available_groups,
+    )
+
+    assert len(actions) == 1
+    assert actions[0].action_type == "BOOTSTRAP_REPLICAT_GROUP"
+    assert actions[0].group_name == "REP_NEW"

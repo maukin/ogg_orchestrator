@@ -1,0 +1,113 @@
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+from app.models.group_bootstrap import GroupBootstrapRequest, GroupBootstrapResult
+from app.models.groups import GroupConfig
+from app.repositories.group_repo import GroupRepository
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class GroupBootstrapService:
+    def __init__(self, group_repo: GroupRepository):
+        self.group_repo = group_repo
+
+    def bootstrap(
+        self,
+        request: GroupBootstrapRequest,
+        artifacts_dir: str | Path,
+    ) -> GroupBootstrapResult:
+        started_at = _utc_now()
+        out_dir = Path(artifacts_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        request_artifact = out_dir / f"bootstrap_{request.group_type}_{request.group_name}_request.json"
+        response_artifact = out_dir / f"bootstrap_{request.group_type}_{request.group_name}_response.json"
+
+        request_payload = {
+            "group_name": request.group_name,
+            "group_type": request.group_type,
+            "environment_name": request.environment_name,
+            "source_system": request.source_system,
+            "target_system": request.target_system,
+            "credential_alias": request.credential_alias,
+            "credential_domain": request.credential_domain,
+            "trail_name": request.trail_name,
+            "mode": request.mode,
+            "base_config_lines": request.base_config_lines,
+            "notes": request.notes,
+        }
+        request_artifact.write_text(
+            json.dumps(request_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        try:
+            self.group_repo.create_group(
+                GroupConfig(
+                    group_name=request.group_name,
+                    group_type=request.group_type,
+                    environment_name=request.environment_name,
+                    source_system=request.source_system,
+                    target_system=request.target_system,
+                    max_tables=None,
+                    priority_class=None,
+                    active_flag=True,
+                    notes=request.notes,
+                )
+            )
+
+            response_payload = {
+                "success": True,
+                "message": "Bootstrap metadata created successfully.",
+                "group_name": request.group_name,
+                "group_type": request.group_type,
+                "mode": request.mode,
+                "base_config_lines": request.base_config_lines,
+            }
+            response_artifact.write_text(
+                json.dumps(response_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            return GroupBootstrapResult(
+                success=True,
+                group_name=request.group_name,
+                group_type=request.group_type,
+                started_at=started_at,
+                finished_at=_utc_now(),
+                request_artifact=str(request_artifact),
+                response_artifact=str(response_artifact),
+                raw_output=response_payload["message"],
+                error_code=None,
+                error_message=None,
+            )
+        except Exception as exc:
+            response_payload = {
+                "success": False,
+                "message": str(exc),
+                "group_name": request.group_name,
+                "group_type": request.group_type,
+            }
+            response_artifact.write_text(
+                json.dumps(response_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            return GroupBootstrapResult(
+                success=False,
+                group_name=request.group_name,
+                group_type=request.group_type,
+                started_at=started_at,
+                finished_at=_utc_now(),
+                request_artifact=str(request_artifact),
+                response_artifact=str(response_artifact),
+                raw_output=None,
+                error_code="GROUP_BOOTSTRAP_FAILED",
+                error_message=str(exc),
+            )

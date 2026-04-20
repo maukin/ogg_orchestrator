@@ -1,0 +1,21 @@
+from app.integrations.initial_load_backends import InitialLoadBackendDispatcher
+
+
+def test_initial_load_backend_dispatcher_maps_ogg_single(monkeypatch):
+    monkeypatch.setenv("SOURCE_DB_CONNECT_STRING", "src_conn")
+    monkeypatch.setenv("TARGET_DB_CONNECT_STRING", "tgt_conn")
+    monkeypatch.setenv("OGG_ADMIN_URL", "http://localhost:9000")
+    monkeypatch.setenv("OGG_ADMIN_DEPLOYMENT", "GG-01")
+    monkeypatch.setenv("OGG_ADMIN_USER", "ggadmin")
+    monkeypatch.setenv("OGG_ADMIN_PASSWORD", "secret")
+    monkeypatch.setenv("OGG_PARAM_DIR", "/tmp")
+    monkeypatch.setenv("OGG_TEMP_DIR", "/tmp")
+    monkeypatch.setenv("OGG_SOURCE_USERID", "source_user@db")
+    monkeypatch.setenv("OGG_SOURCE_PASSWORD", "source_pwd")
+    monkeypatch.setenv("OGG_TARGET_USERID", "target_user@db")
+    monkeypatch.setenv("OGG_TARGET_PASSWORD", "target_pwd")
+
+    dispatcher = InitialLoadBackendDispatcher()
+    backend = dispatcher.get_backend("OGG_INITIAL_SINGLE")
+
+    assert backend.__class__.__name__ == "OGGInitialSingleBackend"

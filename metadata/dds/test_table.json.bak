@@ -1,0 +1,51 @@
+{
+  "table_name": "test_table",
+  "schema": "rawdata",
+  "table_type": "DIM",
+  "description": "Справочник клиентов.",
+  "columns": [
+    {
+      "name": "customer_id",
+      "data_type": "number",
+      "nullable": false,
+      "is_primary_key": true
+    },
+    {
+      "name": "first_name",
+      "data_type": "varchar2",
+      "nullable": true,
+      "is_primary_key": false
+    },
+    {
+      "name": "last_name",
+      "data_type": "varchar2",
+      "nullable": true,
+      "is_primary_key": false
+    }
+  ],
+  "meta": {
+    "table_name": "test_table",
+    "tgt_system_schema": "rawdata",
+    "src_system_schema": "source_user",
+    "database_type": "oracle",
+    "table_type": "dim",
+    "description": "Справочник клиентов.",
+    "src_system_type": "oracle",
+    "cdc": {
+      "enabled": false,
+      "replication_mode": "INITIAL_PLUS_CDC",
+      "source_system": "SRCDB",
+      "source_pdb": "SRCPDB",
+      "target_system": "TGTDB",
+      "target_pdb": "OASIPDB",
+      "extract_group": "EXT_SRC_01",
+      "replicat_group": "REP_DDS_01",
+      "load_method": "DATAPUMP",
+      "priority": "NORMAL",
+      "size_class": "SMALL"
+    }
+  },
+  "primary_key": [
+    "id"
+  ]
+}

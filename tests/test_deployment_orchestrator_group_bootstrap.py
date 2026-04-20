@@ -1,0 +1,359 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from app.models.deployment import DeploymentPlan
+from app.models.groups import GroupConfig
+from app.models.registry import DesiredTableConfig
+from app.orchestration.deployment_orchestrator import DeploymentOrchestrator
+
+
+def _cfg() -> DesiredTableConfig:
+    return DesiredTableConfig(
+        source_system="SRCDB",
+        source_pdb="SRCPDB",
+        source_schema="SRC",
+        source_table="TEST_USERS",
+        target_system="TGTDB",
+        target_pdb="TGPDB",
+        target_schema="DDS",
+        target_table="TEST_USERS",
+        desired_enabled=True,
+        desired_replication_mode="INITIAL_PLUS_CDC",
+        desired_extract_group="EXT_NEW",
+        desired_replicat_group="REP_NEW",
+        desired_load_method="DATAPUMP",
+        desired_priority="NORMAL",
+        desired_size_class="SMALL",
+        primary_key=["ID"],
+        metadata_file="metadata/test_users.json",
+    )
+
+
+def _group(name: str, group_type: str) -> GroupConfig:
+    return GroupConfig(
+        group_name=name,
+        group_type=group_type,
+        environment_name="dev",
+        source_system="SRCDB",
+        target_system="TGTDB",
+        max_tables=None,
+        priority_class=None,
+        active_flag=True,
+        notes=None,
+    )
+
+
+def _artifacts_dir(name: str) -> Path:
+    path = Path("artifacts") / "_tests" / name
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+class FakeRegistryRepo:
+    def list_all(self):
+        return []
+
+    def register_new_table(self, payload, deployment_id):
+        return None
+
+    def get_by_table_id(self, table_id):
+        return None
+
+    def update_desired_state(self, table_id, changes, deployment_id):
+        return None
+
+    def update_state(self, table_id, state, deployment_id):
+        return None
+
+    def mark_error(self, table_id, deployment_id, error_code, error_message):
+        return None
+
+
+class FakeEventRepo:
+    def add_event(self, event):
+        return None
+
+
+class FakeDeploymentRepo:
+    def __init__(self):
+        self.started = False
+        self.finished = False
+
+    def start(self, deployment_id, environment_name, git_branch, git_commit_sha, pipeline_id, plan):
+        self.started = True
+
+    def finish(self, deployment_id, status):
+        self.finished = True
+
+
+class FakeGroupRepo:
+    def __init__(self):
+        self.created = []
+        self.call_count = 0
+
+    def list_active_groups(self, environment_name):
+        self.call_count += 1
+        if not self.created:
+            return []
+        return self.created.copy()
+
+    def create_group(self, config):
+        self.created.append(config)
+
+
+class FakePlannerService:
+    def __init__(self):
+        self.called = False
+
+    def build_plan(
+        self,
+        deployment_id,
+        environment_name,
+        git_branch,
+        git_commit_sha,
+        pipeline_id,
+        desired_configs,
+        current_registry,
+    ):
+        self.called = True
+        return DeploymentPlan(
+            deployment_id=deployment_id,
+            environment_name=environment_name,
+            git_branch=git_branch,
+            git_commit_sha=git_commit_sha,
+            pipeline_id=pipeline_id,
+            actions=[],
+        )
+
+
+class FakeStateMachineService:
+    def ensure_transition_allowed(self, old_state, new_state):
+        return None
+
+
+class FakeArtifactRenderer:
+    def render_plan_artifacts(self, plan, output_dir):
+        return None
+
+    def render_cdc_config_bundle(self, bundle, output_dir):
+        return None
+
+    def render_status_report(self, report, output_dir):
+        return None
+
+    def render_execution_summary(self, summary, output_dir):
+        return None
+
+    def render_reconciliation_report(self, report, output_dir):
+        return None
+
+
+class FakeRerunAnalysisService:
+    def build_report(self, deployment_id, environment_name, desired_configs, current_registry):
+        return {"ok": True}
+
+
+class FakeDeploymentExecutionSummaryService:
+    def build_summary(self, deployment_id, environment_name, step_results):
+        return {"ok": True}
+
+
+class FakeReconciliationService:
+    def build_report(
+        self,
+        deployment_id,
+        environment_name,
+        desired_configs,
+        current_registry,
+        extract_probe_results=None,
+        replicat_probe_results=None,
+    ):
+        return {"ok": True}
+
+
+class FakeCDCConfigRenderService:
+    def build_bundle(self, desired_configs):
+        return {"ok": True}
+
+
+@dataclass
+class FakeBootstrapResult:
+    success: bool
+    group_name: str
+    group_type: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    request_artifact: str | None = None
+    response_artifact: str | None = None
+    raw_output: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class FakeGroupBootstrapPlannerService:
+    def build_bootstrap_actions(self, environment_name, desired_configs, available_groups):
+        return [
+            type(
+                "Action",
+                (),
+                {
+                    "action_type": "BOOTSTRAP_EXTRACT_GROUP",
+                    "table_id": None,
+                    "group_name": "EXT_NEW",
+                    "payload": {
+                        "group_name": "EXT_NEW",
+                        "group_type": "extract",
+                        "environment_name": "dev",
+                        "source_system": "SRCDB",
+                        "target_system": "TGTDB",
+                        "credential_alias": "GGADMIN",
+                        "credential_domain": "OracleGoldenGate",
+                        "trail_name": "lt",
+                        "mode": "INTEGRATED",
+                        "base_config_lines": [
+                            "EXTRACT EXT_NEW",
+                            "USERIDALIAS GGADMIN",
+                            "EXTTRAIL lt",
+                        ],
+                        "notes": "bootstrap extract",
+                    },
+                },
+            )(),
+            type(
+                "Action",
+                (),
+                {
+                    "action_type": "BOOTSTRAP_REPLICAT_GROUP",
+                    "table_id": None,
+                    "group_name": "REP_NEW",
+                    "payload": {
+                        "group_name": "REP_NEW",
+                        "group_type": "replicat",
+                        "environment_name": "dev",
+                        "source_system": "SRCDB",
+                        "target_system": "TGTDB",
+                        "credential_alias": "TARGET_DB_CONN",
+                        "credential_domain": None,
+                        "trail_name": "lt",
+                        "mode": "NONINTEGRATED",
+                        "base_config_lines": [
+                            "REPLICAT REP_NEW",
+                            "USERIDALIAS TARGET_DB_CONN",
+                            "BATCHSQL",
+                        ],
+                        "notes": "bootstrap replicat",
+                    },
+                },
+            )(),
+        ]
+
+
+class FakeGroupBootstrapService:
+    def __init__(self, group_repo: FakeGroupRepo):
+        self.group_repo = group_repo
+        self.calls = []
+
+    def bootstrap(self, request, artifacts_dir):
+        self.calls.append(request)
+        self.group_repo.create_group(
+            _group(request.group_name, request.group_type)
+        )
+        return FakeBootstrapResult(
+            success=True,
+            group_name=request.group_name,
+            group_type=request.group_type,
+        )
+
+
+class FakeGroupingService:
+    def __init__(self):
+        self.validate_calls = []
+
+    def validate_desired_groups(
+        self,
+        desired_configs,
+        current_registry,
+        available_groups,
+        strict_existing_groups=True,
+    ):
+        self.validate_calls.append(strict_existing_groups)
+
+    def find_missing_groups(self, desired_configs, available_groups):
+        return {"extract": {"EXT_NEW"}, "replicat": {"REP_NEW"}}
+
+
+def test_deployment_orchestrator_bootstraps_missing_groups():
+    registry_repo = FakeRegistryRepo()
+    event_repo = FakeEventRepo()
+    deployment_repo = FakeDeploymentRepo()
+    group_repo = FakeGroupRepo()
+    planner_service = FakePlannerService()
+    state_machine = FakeStateMachineService()
+    grouping_service = FakeGroupingService()
+    artifact_renderer = FakeArtifactRenderer()
+    rerun_analysis_service = FakeRerunAnalysisService()
+    execution_summary_service = FakeDeploymentExecutionSummaryService()
+    reconciliation_service = FakeReconciliationService()
+    cdc_config_render_service = FakeCDCConfigRenderService()
+
+    bootstrap_planner = FakeGroupBootstrapPlannerService()
+    bootstrap_service = FakeGroupBootstrapService(group_repo)
+
+    orchestrator = DeploymentOrchestrator(
+        registry_repo=registry_repo,
+        event_repo=event_repo,
+        deployment_repo=deployment_repo,
+        group_repo=group_repo,
+        planner_service=planner_service,
+        state_machine=state_machine,
+        grouping_service=grouping_service,
+        artifact_renderer=artifact_renderer,
+        prepare_source_service=None,
+        attach_extract_service=None,
+        initial_load_service=None,
+        instantiation_service=None,
+        attach_replicat_service=None,
+        activation_service=None,
+        rerun_analysis_service=rerun_analysis_service,
+        deployment_execution_summary_service=execution_summary_service,
+        extract_status_probe_service=None,
+        replicat_status_probe_service=None,
+        reconciliation_service=reconciliation_service,
+        cdc_config_render_service=cdc_config_render_service,
+        group_bootstrap_planner_service=bootstrap_planner,
+        group_bootstrap_service=bootstrap_service,
+    )
+
+    plan = orchestrator.build_and_apply_registry_changes(
+        deployment_id="dep_test_001",
+        environment_name="dev",
+        git_branch=None,
+        git_commit_sha=None,
+        pipeline_id=None,
+        desired_configs=[_cfg()],
+        artifacts_dir=_artifacts_dir("orchestrator_group_bootstrap"),
+        prepare_source_mode="DRY_RUN",
+        attach_extract_mode="DRY_RUN",
+        initial_load_mode="DRY_RUN",
+        instantiation_mode="DRY_RUN",
+        attach_replicat_mode="DRY_RUN",
+        activation_mode="DRY_RUN",
+    )
+
+    assert plan.deployment_id == "dep_test_001"
+    assert planner_service.called is True
+    assert deployment_repo.started is True
+
+    assert len(bootstrap_service.calls) == 2
+    assert {c.group_name for c in bootstrap_service.calls} == {"EXT_NEW", "REP_NEW"}
+
+    assert len(group_repo.created) == 2
+    assert {g.group_name for g in group_repo.created} == {"EXT_NEW", "REP_NEW"}
+
+    # сначала мягкая валидация, потом строгая
+    assert grouping_service.validate_calls == [False, True]
+
+    # группы перечитывались до и после bootstrap
+    assert group_repo.call_count >= 2

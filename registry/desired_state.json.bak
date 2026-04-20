@@ -1,0 +1,33 @@
+{
+  "environment": "dev",
+  "revision": {
+    "git_commit_sha": null,
+    "git_branch": null,
+    "generated_at": "2026-04-09T10:09:33.491933+00:00",
+    "source_dir": "metadata"
+  },
+  "tables": [
+    {
+      "source_system": "SRCDB",
+      "source_pdb": "SRCPDB",
+      "source_schema": "SOURCE_USER",
+      "source_table": "TEST_USERS",
+      "target_system": "TGTDB",
+      "target_pdb": "OASIPDB",
+      "target_schema": "RAWDATA",
+      "target_table": "TEST_USERS",
+      "desired_enabled": true,
+      "desired_replication_mode": "INITIAL_PLUS_CDC",
+      "desired_extract_group": "EXT_SRC",
+      "desired_replicat_group": "TGT11",
+      "desired_load_method": "DATAPUMP",
+      "desired_priority": "NORMAL",
+      "desired_size_class": "SMALL",
+      "primary_key": [
+        "ID"
+      ],
+      "metadata_file": "metadata\\test_users.json",
+      "table_id": "SRCDB:SRCPDB:SOURCE_USER.TEST_USERS->TGTDB:OASIPDB:RAWDATA.TEST_USERS"
+    }
+  ]
+}

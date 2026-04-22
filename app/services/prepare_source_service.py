@@ -48,13 +48,26 @@ class PrepareSourceService:
         prepared_table_ids: list[str] = []
 
         for plan_action in plan.actions:
+            print(
+                "[prepare_source] action_type=",
+                plan_action.action_type,
+                "table_id=",
+                plan_action.table_id,
+            )
+
             if plan_action.action_type not in PREPARE_ATTACH_ACTIONS:
+                print("[prepare_source] skipped by PREPARE_ATTACH_ACTIONS filter")
                 continue
+
             if not plan_action.table_id:
+                print("[prepare_source] skipped because table_id is empty")
                 continue
 
             record = self.registry_repo.get_by_table_id(plan_action.table_id)
+            print("[prepare_source] registry record:", record)
+
             if record is None:
+                print("[prepare_source] skipped because registry record not found")
                 continue
 
             policy = self.step_policy.evaluate(
@@ -63,6 +76,8 @@ class PrepareSourceService:
                 expected_state=TableState.PLANNED,
                 success_state=TableState.PREPARED,
             )
+            print("[prepare_source] policy decision:", policy.decision)
+
             if policy.decision == "SKIP":
                 continue
             if policy.decision == "INVALID_STATE":

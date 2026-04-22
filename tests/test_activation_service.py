@@ -9,7 +9,6 @@ from app.services.state_machine_service import StateMachineService
 from app.services.step_execution_policy_service import StepExecutionPolicyService
 
 
-
 class DummyRegistryRepo:
     def __init__(self):
         self.records = {
@@ -112,7 +111,7 @@ def test_activation_moves_table_to_active_and_sets_validation_status():
         pipeline_id=None,
         actions=[
             DeploymentAction(
-                action_type="PLAN_INITIAL_LOAD",
+                action_type="PLAN_CDC_ONLY",
                 table_id="T1",
                 group_name="REP_01",
                 payload={"reason": "TEST"},
@@ -124,7 +123,7 @@ def test_activation_moves_table_to_active_and_sets_validation_status():
         deployment_id="dep1",
         plan=plan,
         artifacts_dir=_artifacts_dir("activation_success"),
-        mode="DRY_RUN",
+        action="APPLY",
     )
 
     assert registry_repo.records["T1"].state == TableState.ACTIVE
@@ -156,7 +155,7 @@ def test_activation_marks_error_when_executor_returns_no_result():
         pipeline_id=None,
         actions=[
             DeploymentAction(
-                action_type="PLAN_INITIAL_LOAD",
+                action_type="PLAN_CDC_ONLY",
                 table_id="T1",
                 group_name="REP_01",
                 payload={"reason": "TEST"},
@@ -168,7 +167,7 @@ def test_activation_marks_error_when_executor_returns_no_result():
         deployment_id="dep1",
         plan=plan,
         artifacts_dir=_artifacts_dir("activation_no_result"),
-        mode="FILE_ONLY",
+        action="APPLY",
     )
 
     assert result is not None

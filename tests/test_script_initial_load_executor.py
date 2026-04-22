@@ -26,7 +26,7 @@ def test_script_initial_load_executor_runs_external_script(tmp_path: Path):
         metadata_file="metadata/orders.json",
         command_type="INITIAL_LOAD",
         command_text="run_initial_load --source SRC.ORDERS --target DDS.ORDERS",
-        mode="SCRIPT",
+        action="APPLY",
         reason="TEST",
     )
 

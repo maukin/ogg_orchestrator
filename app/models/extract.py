@@ -10,5 +10,5 @@ class ExtractAttachCommand:
     source_table: str
     command_type: str
     command_text: str
-    mode: str
+    action: str
     reason: Optional[str]

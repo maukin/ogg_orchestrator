@@ -115,7 +115,7 @@ def test_attach_extract_moves_table_to_cdc_capture_attached():
         deployment_id="dep1",
         plan=plan,
         artifacts_dir=artifacts_dir,
-        mode="FILE_ONLY",
+        action="APPLY",
     )
 
     assert result is not None

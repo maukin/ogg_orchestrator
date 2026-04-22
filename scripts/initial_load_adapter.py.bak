@@ -130,12 +130,32 @@ def main() -> int:
             "raw_output": result.raw_output,
             "error_code": result.error_code,
             "error_message": result.error_message,
+            "resolved_flashback_scn": result.resolved_flashback_scn,
+            "source_rowcount": result.source_rowcount,
+            "source_rowcount_as_of_scn": result.source_rowcount_as_of_scn,
+            "target_rowcount_before": result.target_rowcount_before,
+            "target_rowcount_after": result.target_rowcount_after,
+            "verification_passed": result.verification_passed,
+            "stdout_text": result.stdout_text,
+            "stderr_text": result.stderr_text,
         }
         last_backend_result_payload = backend_result_payload
         write_initial_load_backend_result(
             backend_result_payload,
             artifacts_dir=artifacts_dir,
         )
+
+        if result.stdout_text is not None:
+            (artifacts_dir / "initial_load_stdout.log").write_text(
+                result.stdout_text,
+                encoding="utf-8",
+            )
+
+        if result.stderr_text is not None:
+            (artifacts_dir / "initial_load_stderr.log").write_text(
+                result.stderr_text,
+                encoding="utf-8",
+            )
 
         if started_at is None:
             started_at = result.started_at

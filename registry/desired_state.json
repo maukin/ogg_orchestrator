@@ -3,16 +3,16 @@
   "revision": {
     "git_commit_sha": null,
     "git_branch": null,
-    "generated_at": "2026-04-09T10:09:33.491933+00:00",
+    "generated_at": "2026-04-22T09:33:52.196495+00:00",
     "source_dir": "metadata"
   },
   "tables": [
     {
-      "source_system": "SRCDB",
+      "source_system": "SOURCE_USER",
       "source_pdb": "SRCPDB",
       "source_schema": "SOURCE_USER",
       "source_table": "TEST_TABLE",
-      "target_system": "TGTDB",
+      "target_system": "RAWDATA",
       "target_pdb": "OASIPDB",
       "target_schema": "RAWDATA",
       "target_table": "TEST_TABLE",
@@ -26,8 +26,8 @@
       "primary_key": [
         "ID"
       ],
-      "metadata_file": "metadata\\test_table.json",
-      "table_id": "SRCDB:SRCPDB:SOURCE_USER.TEST_TABLE->TGTDB:OASIPDB:RAWDATA.TEST_TABLE"
+      "metadata_file": "metadata\\dds\\test_table.json",
+      "table_id": "SOURCE_USER:SRCPDB:SOURCE_USER.TEST_TABLE->RAWDATA:OASIPDB:RAWDATA.TEST_TABLE"
     }
   ]
 }

@@ -20,7 +20,7 @@ def test_file_only_attach_extract_executor(tmp_path: Path):
         fragment_path=str(tmp_path / "cdc" / "extract" / "EXT_01.tables.prm"),
         command_type="ATTACH_EXTRACT",
         command_text="attach_extract",
-        mode="FILE_ONLY",
+        action="PLAN_ONLY",
         reason="TEST",
     )
 
@@ -56,7 +56,7 @@ def test_script_attach_extract_executor(tmp_path: Path):
         fragment_path=str(fragment_path),
         command_type="ATTACH_EXTRACT",
         command_text="attach_extract",
-        mode="SCRIPT",
+        action="APPLY",
         reason="TEST",
     )
 

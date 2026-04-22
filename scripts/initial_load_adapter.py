@@ -28,7 +28,7 @@ def _to_command(payload: dict) -> BackendCommand:
         metadata_file=payload.get("metadata_file"),
         command_type=payload["command_type"],
         command_text=payload["command_text"],
-        mode=payload["mode"],
+        action=payload["action"],
         reason=payload.get("reason"),
     )
 
@@ -108,7 +108,7 @@ def main() -> int:
             "metadata_file": command.metadata_file,
             "command_type": command.command_type,
             "command_text": command.command_text,
-            "mode": command.mode,
+            "action": command.action,
             "reason": command.reason,
         }
         last_backend_context = backend_context

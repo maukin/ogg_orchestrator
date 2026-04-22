@@ -21,7 +21,7 @@ def test_prepare_payload_builder_table_scope():
                 source_table="ORDERS",
                 command_type="ADD_TRANDATA",
                 command_text="ADD TRANDATA SRC.ORDERS;",
-                mode="DRY_RUN",
+                action="PLAN_ONLY",
                 reason="TEST",
             )
         ]
@@ -45,7 +45,7 @@ def test_prepare_payload_builder_schema_scope():
                 source_table="ORDERS",
                 command_type="ADD_TRANDATA",
                 command_text="ADD TRANDATA SRC.ORDERS;",
-                mode="DRY_RUN",
+                action="PLAN_ONLY",
                 reason="TEST",
             )
         ]
@@ -65,7 +65,7 @@ def test_extract_attach_payload_builder_uses_realistic_patch_endpoint():
                 source_table="ORDERS",
                 command_type="ADD_TABLE_TO_EXTRACT",
                 command_text="EXTRACT EXT_01: ADD TABLE SRC.ORDERS;",
-                mode="DRY_RUN",
+                action="PLAN_ONLY",
                 reason="TEST",
             )
         ]
@@ -88,7 +88,7 @@ def test_replicat_attach_payload_builder_uses_realistic_patch_endpoint():
                 target_table="ORDERS",
                 command_type="ADD_MAP_TO_REPLICAT",
                 command_text="REPLICAT REP_01: MAP SRC.ORDERS, TARGET DDS.ORDERS;",
-                mode="DRY_RUN",
+                action="PLAN_ONLY",
                 reason="TEST",
             )
         ]

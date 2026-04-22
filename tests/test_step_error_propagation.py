@@ -123,7 +123,7 @@ def test_prepare_source_marks_table_error_when_executor_fails(tmp_path: Path):
         deployment_id="dep1",
         plan=plan,
         artifacts_dir=tmp_path,
-        mode="DRY_RUN",
+        action="PLAN_ONLY",
     )
 
     assert result is not None

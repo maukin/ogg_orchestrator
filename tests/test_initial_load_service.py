@@ -149,7 +149,7 @@ def test_initial_load_moves_table_to_initial_load_done():
         deployment_id="dep1",
         plan=plan,
         artifacts_dir=artifacts_dir,
-        mode="DRY_RUN",
+        action="APPLY",
     )
 
     assert result is not None

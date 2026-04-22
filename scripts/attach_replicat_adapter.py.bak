@@ -13,6 +13,10 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def timestamp_for_file() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+
 def require_env(name: str) -> str:
     value = os.getenv(name, "").strip()
     if not value:
@@ -25,6 +29,7 @@ def read_text(path: Path) -> str:
 
 
 def write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -54,14 +59,45 @@ def fetch_replicat(replicat_name: str) -> dict:
 
 def patch_replicat(replicat_name: str, payload: dict) -> requests.Response:
     url = f"{get_base_url()}/services/v2/replicats/{replicat_name}"
-    response = requests.patch(
+    return requests.patch(
         url,
         auth=get_auth(),
         json=payload,
         verify=False,
         timeout=30,
     )
-    return response
+
+
+def post_replicat_command(replicat_name: str, command: str) -> requests.Response:
+    url = f"{get_base_url()}/services/v2/replicats/{replicat_name}/command"
+    payload = {"name": command.upper()}
+    return requests.post(
+        url,
+        auth=get_auth(),
+        json=payload,
+        verify=False,
+        timeout=30,
+    )
+
+
+def restart_replicat(replicat_name: str, artifacts_dir: Path) -> tuple[bool, str]:
+    stop_resp = post_replicat_command(replicat_name, "stop")
+    write_json(
+        artifacts_dir / "attach_replicat_stop_response.json",
+        {"http_status": stop_resp.status_code, "response_text": stop_resp.text},
+    )
+    if not (200 <= stop_resp.status_code < 300):
+        return False, f"STOP failed: {stop_resp.status_code} {stop_resp.text}"
+
+    start_resp = post_replicat_command(replicat_name, "start")
+    write_json(
+        artifacts_dir / "attach_replicat_start_response.json",
+        {"http_status": start_resp.status_code, "response_text": start_resp.text},
+    )
+    if not (200 <= start_resp.status_code < 300):
+        return False, f"START failed: {start_resp.status_code} {start_resp.text}"
+
+    return True, "Restart completed successfully."
 
 
 def main() -> int:
@@ -71,6 +107,8 @@ def main() -> int:
 
     request_path = Path(sys.argv[1])
     response_path = Path(sys.argv[2])
+    artifacts_dir = response_path.parent
+    backup_dir = artifacts_dir / "cdc" / "replicat"
 
     request_payload = json.loads(read_text(request_path))
     commands = request_payload.get("commands", [])
@@ -90,6 +128,8 @@ def main() -> int:
                 "raw_output": "No attach_replicat commands.",
                 "error_code": None,
                 "error_message": None,
+                "restart_performed": False,
+                "rollback_performed": False,
             },
         )
         return 0
@@ -97,15 +137,22 @@ def main() -> int:
     try:
         group_name = commands[0]["replicat_group"]
 
-        current_doc = fetch_replicat(group_name)
-        current_cfg = list(current_doc.get("response", {}).get("config", []))
-        if not current_cfg:
+        before_doc = fetch_replicat(group_name)
+        write_json(
+            backup_dir / f"{group_name}_{timestamp_for_file()}_backup.json",
+            before_doc,
+        )
+        write_json(artifacts_dir / "attach_replicat_before.json", before_doc)
+
+        before_cfg = list(before_doc.get("response", {}).get("config", []))
+        if not before_cfg:
             raise RuntimeError(f"Replicat {group_name} returned empty config.")
+
+        current_cfg = list(before_cfg)
+        current_set = {line.strip() for line in current_cfg if str(line).strip()}
 
         total_applied = 0
         changed = False
-
-        current_set = {line.strip() for line in current_cfg if str(line).strip()}
 
         for cmd in commands:
             fragment_path = Path(cmd["fragment_path"])
@@ -137,14 +184,22 @@ def main() -> int:
                     "raw_output": "All replicat rules already present. No changes applied.",
                     "error_code": None,
                     "error_message": None,
+                    "restart_performed": False,
+                    "rollback_performed": False,
                 },
             )
             return 0
 
         patch_payload = {"config": current_cfg}
-        response = patch_replicat(group_name, patch_payload)
+        write_json(artifacts_dir / "attach_replicat_patch_payload.json", patch_payload)
 
-        if not (200 <= response.status_code < 300):
+        patch_resp = patch_replicat(group_name, patch_payload)
+        write_json(
+            artifacts_dir / "attach_replicat_patch_response.json",
+            {"http_status": patch_resp.status_code, "response_text": patch_resp.text},
+        )
+
+        if not (200 <= patch_resp.status_code < 300):
             write_json(
                 response_path,
                 {
@@ -155,12 +210,38 @@ def main() -> int:
                     "applied_tables_count": total_applied,
                     "started_at": started_at,
                     "finished_at": utc_now(),
-                    "raw_output": response.text,
-                    "error_code": f"PATCH_HTTP_{response.status_code}",
-                    "error_message": f"Replicat PATCH failed: {response.status_code}",
+                    "raw_output": patch_resp.text,
+                    "error_code": f"PATCH_HTTP_{patch_resp.status_code}",
+                    "error_message": f"Replicat PATCH failed: {patch_resp.status_code}",
+                    "restart_performed": False,
+                    "rollback_performed": False,
                 },
             )
             return 1
+
+        restart_ok, restart_msg = restart_replicat(group_name, artifacts_dir)
+        if not restart_ok:
+            write_json(
+                response_path,
+                {
+                    "success": False,
+                    "executed_count": 0,
+                    "skipped_count": 0,
+                    "group_name": group_name,
+                    "applied_tables_count": total_applied,
+                    "started_at": started_at,
+                    "finished_at": utc_now(),
+                    "raw_output": restart_msg,
+                    "error_code": "RESTART_FAILED",
+                    "error_message": restart_msg,
+                    "restart_performed": True,
+                    "rollback_performed": False,
+                },
+            )
+            return 1
+
+        after_doc = fetch_replicat(group_name)
+        write_json(artifacts_dir / "attach_replicat_after.json", after_doc)
 
         write_json(
             response_path,
@@ -172,9 +253,11 @@ def main() -> int:
                 "applied_tables_count": total_applied,
                 "started_at": started_at,
                 "finished_at": utc_now(),
-                "raw_output": response.text,
+                "raw_output": restart_msg,
                 "error_code": None,
                 "error_message": None,
+                "restart_performed": True,
+                "rollback_performed": False,
             },
         )
         return 0
@@ -193,6 +276,8 @@ def main() -> int:
                 "raw_output": None,
                 "error_code": "ATTACH_REPLICAT_EXCEPTION",
                 "error_message": str(exc),
+                "restart_performed": False,
+                "rollback_performed": False,
             },
         )
         return 1

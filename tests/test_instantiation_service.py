@@ -119,7 +119,7 @@ def test_instantiation_moves_table_to_instantiated():
         deployment_id="dep1",
         plan=plan,
         artifacts_dir=_artifacts_dir("instantiation_success"),
-        mode="DRY_RUN",
+        action="APPLY",
     )
 
     assert registry_repo.records["T1"].state == TableState.INSTANTIATED
@@ -163,7 +163,7 @@ def test_instantiation_marks_error_when_executor_returns_no_result():
         deployment_id="dep1",
         plan=plan,
         artifacts_dir=_artifacts_dir("instantiation_no_result"),
-        mode="FILE_ONLY",
+        action="PLAN_ONLY",
     )
 
     assert result is not None
@@ -211,7 +211,7 @@ def test_instantiation_supports_cdc_only_after_capture_attach():
         deployment_id="dep1",
         plan=plan,
         artifacts_dir=_artifacts_dir("instantiation_cdc_only"),
-        mode="DRY_RUN",
+        action="APPLY",
     )
 
     assert result is not None

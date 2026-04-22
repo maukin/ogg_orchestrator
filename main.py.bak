@@ -64,6 +64,7 @@ from app.integrations.ogg_rest_client import OGGRestClient, OGGRestConfig
 from app.executors.ogg_rest_prepare_executor import OGGRestPrepareExecutor
 from app.executors.ogg_rest_extract_attach_executor import OGGRestExtractAttachExecutor
 from app.executors.ogg_rest_replicat_attach_executor import OGGRestReplicatAttachExecutor
+from app.repositories.table_metadata_repo import TableMetadataRepository
 
 from app.services.deployment_execution_summary_service import DeploymentExecutionSummaryService
 from app.services.extract_status_probe_service import ExtractStatusProbeService
@@ -84,14 +85,55 @@ from app.executors.attach_replicat_executor import (
     ScriptAttachReplicatExecutor,
 )
 
+from app.services.group_bootstrap_planner_service import GroupBootstrapPlannerService
+from app.services.group_bootstrap_service import GroupBootstrapService
+from app.services.ogg_base_config_factory import OGGBaseConfigFactory
+from app.services.ogg_process_bootstrap_service import OGGProcessBootstrapService
+from app.services.desired_state_snapshot_builder import DesiredStateSnapshotBuilder
 
+
+def build_desired_state_snapshot_if_configured(cfg: AppConfig) -> dict[str, object] | None:
+    if not cfg.build_desired_state_from_metadata:
+        return None
+
+    repo = TableMetadataRepository()
+    builder = DesiredStateSnapshotBuilder()
+
+    configs = repo.load_from_directory(cfg.metadata_dir)
+    snapshot = builder.build_snapshot(
+        environment=cfg.environment_name,
+        configs=configs,
+        git_commit_sha=cfg.git_commit_sha,
+        git_branch=cfg.git_branch,
+        source_dir=cfg.metadata_dir,
+    )
+    builder.write_snapshot(snapshot, cfg.desired_state_path)
+    return {
+        "tables_count": len(configs),
+        "output_path": cfg.desired_state_path,
+        "metadata_dir": cfg.metadata_dir,
+    }
 
 def main() -> int:
     cfg = AppConfig.from_env()
     cfg.validate()
+    connection = None
+    plan = None
 
     Path("artifacts").mkdir(parents=True, exist_ok=True)
     write_effective_config_artifact(cfg, "artifacts")
+
+    snapshot_build_info = build_desired_state_snapshot_if_configured(cfg)
+    if snapshot_build_info is not None:
+        print(
+            json.dumps(
+                {
+                    "message": "desired_state_snapshot_built",
+                    **snapshot_build_info,
+                },
+                ensure_ascii=False,
+            )
+        )
 
     def build_ogg_rest_client(cfg: AppConfig) -> OGGRestClient:
         if not cfg.ogg_rest_base_url:
@@ -311,6 +353,28 @@ def main() -> int:
             replicat_status_probe_service = ReplicatStatusProbeService(ogg_rest_client)
 
 
+        group_bootstrap_planner_service = GroupBootstrapPlannerService(
+            config_factory=OGGBaseConfigFactory(),
+            extract_credential_alias="GGADMIN",
+            replicat_credential_alias="TARGET_DB_CONN",
+            extract_credential_domain="OracleGoldenGate",
+            replicat_credential_domain=None,
+            default_trail_name="lt",
+            default_extract_integrated=True,
+        )
+
+        ogg_process_bootstrap_service = None
+        if cfg.ogg_rest_base_url and cfg.ogg_rest_deployment_name:
+            ogg_process_bootstrap_service = OGGProcessBootstrapService(
+                client=build_ogg_rest_client(cfg),
+            )
+
+        group_bootstrap_service = GroupBootstrapService(
+            group_repo=group_repo,
+            ogg_process_bootstrap_service=ogg_process_bootstrap_service,
+        )
+
+
         orchestrator = DeploymentOrchestrator(
             registry_repo=registry_repo,
             event_repo=event_repo,
@@ -332,6 +396,8 @@ def main() -> int:
             replicat_status_probe_service=replicat_status_probe_service,
             reconciliation_service=reconciliation_service,
             cdc_config_render_service=cdc_config_render_service,
+            group_bootstrap_planner_service=group_bootstrap_planner_service,
+            group_bootstrap_service=group_bootstrap_service,
         )
 
         plan = orchestrator.build_and_apply_registry_changes(
@@ -350,6 +416,10 @@ def main() -> int:
             activation_mode=cfg.activation_mode,
         )
 
+        deployment_repo.finish(
+            deployment_id=deployment_id,
+            status="COMPLETED",
+        )
         connection.commit()
 
         print(
@@ -366,7 +436,35 @@ def main() -> int:
         return 0
 
     except Exception as exc:
-        connection.rollback()
+        if connection is not None:
+            try:
+                connection.rollback()
+            except Exception:
+                pass
+
+            try:
+                DeploymentRepository(connection).record_failure(
+                    deployment_id=deployment_id,
+                    environment_name=environment_name,
+                    git_branch=cfg.git_branch,
+                    git_commit_sha=cfg.git_commit_sha,
+                    pipeline_id=cfg.pipeline_id,
+                    error_message=str(exc),
+                    plan=plan,
+                )
+                connection.commit()
+            except Exception as audit_exc:
+                print(
+                    json.dumps(
+                        {
+                            "message": "deployment_failure_audit_failed",
+                            "deployment_id": deployment_id,
+                            "error": str(audit_exc),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    file=sys.stderr,
+                )
         print(
             json.dumps(
                 {
@@ -379,7 +477,8 @@ def main() -> int:
         )
         return 1
     finally:
-        connection.close()
+        if connection is not None:
+            connection.close()
 
 
 if __name__ == "__main__":

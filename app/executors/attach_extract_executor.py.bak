@@ -243,4 +243,6 @@ class ScriptAttachExtractExecutor(AttachExtractExecutor):
             error_message=response_payload.get("error_message"),
             request_artifact=str(request_path),
             response_artifact=str(response_path),
+            restart_performed=response_payload.get("restart_performed"),
+            rollback_performed=response_payload.get("rollback_performed"),
         )

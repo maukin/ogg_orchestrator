@@ -234,10 +234,6 @@ class DeploymentOrchestrator:
                     action=action,
                 )
 
-        step_results: list[tuple[str, object | None]] = []
-        extract_probe_results: dict[str, object] = {}
-        replicat_probe_results: dict[str, object] = {}
-
         if artifacts_dir is not None and self.prepare_source_service is not None:
             prepare_result = self.prepare_source_service.run_prepare(
                 deployment_id=deployment_id,
@@ -466,11 +462,6 @@ class DeploymentOrchestrator:
                 report=reconciliation_report,
                 output_dir=artifacts_dir,
             )
-
-        self.deployment_repo.finish(
-            deployment_id=deployment_id,
-            status="COMPLETED",
-        )
 
         return plan
 

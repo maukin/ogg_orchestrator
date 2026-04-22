@@ -48,7 +48,7 @@ class FileOnlyAttachExtractExecutor(AttachExtractExecutor):
                     "fragment_path": c.fragment_path,
                     "command_type": c.command_type,
                     "command_text": c.command_text,
-                    "mode": c.mode,
+                    "action": c.action,
                     "reason": c.reason,
                 }
                 for c in commands
@@ -124,7 +124,7 @@ class ScriptAttachExtractExecutor(AttachExtractExecutor):
                     "fragment_path": c.fragment_path,
                     "command_type": c.command_type,
                     "command_text": c.command_text,
-                    "mode": c.mode,
+                    "action": c.action,
                     "reason": c.reason,
                 }
                 for c in commands

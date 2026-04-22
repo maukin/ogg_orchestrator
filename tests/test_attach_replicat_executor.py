@@ -21,7 +21,7 @@ def test_file_only_attach_replicat_executor(tmp_path: Path):
         fragment_path=str(tmp_path / "cdc" / "replicat" / "REP_01.maps.prm"),
         command_type="ATTACH_REPLICAT",
         command_text="attach_replicat",
-        mode="FILE_ONLY",
+        action="PLAN_ONLY",
         reason="TEST",
     )
 
@@ -51,7 +51,7 @@ def test_script_attach_replicat_executor(tmp_path: Path):
         fragment_path=str(tmp_path / "cdc" / "replicat" / "REP_01.maps.prm"),
         command_type="ATTACH_REPLICAT",
         command_text="attach_replicat",
-        mode="SCRIPT",
+        action="PLAN_ONLY",
         reason="TEST",
     )
 

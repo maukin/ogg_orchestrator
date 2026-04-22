@@ -334,12 +334,12 @@ def test_deployment_orchestrator_bootstraps_missing_groups():
         pipeline_id=None,
         desired_configs=[_cfg()],
         artifacts_dir=_artifacts_dir("orchestrator_group_bootstrap"),
-        prepare_source_mode="DRY_RUN",
-        attach_extract_mode="DRY_RUN",
-        initial_load_mode="DRY_RUN",
-        instantiation_mode="DRY_RUN",
-        attach_replicat_mode="DRY_RUN",
-        activation_mode="DRY_RUN",
+        prepare_source_action="PLAN_ONLY",
+        attach_extract_action="PLAN_ONLY",
+        initial_load_action="PLAN_ONLY",
+        instantiation_action="PLAN_ONLY",
+        attach_replicat_action="PLAN_ONLY",
+        activation_action="PLAN_ONLY",
     )
 
     assert plan.deployment_id == "dep_test_001"

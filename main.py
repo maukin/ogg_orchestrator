@@ -408,12 +408,12 @@ def main() -> int:
             pipeline_id=cfg.pipeline_id,
             desired_configs=desired_configs,
             artifacts_dir=artifacts_dir,
-            prepare_source_mode=cfg.prepare_source_mode,
-            attach_extract_mode=cfg.attach_extract_mode,
-            initial_load_mode=cfg.initial_load_mode,
-            instantiation_mode=cfg.instantiation_mode,
-            attach_replicat_mode=cfg.attach_replicat_mode,
-            activation_mode=cfg.activation_mode,
+            prepare_source_action=cfg.prepare_source_action,
+            attach_extract_action=cfg.attach_extract_action,
+            initial_load_action=cfg.initial_load_action,
+            instantiation_action=cfg.instantiation_action,
+            attach_replicat_action=cfg.attach_replicat_action,
+            activation_action=cfg.activation_action,
         )
 
         deployment_repo.finish(

@@ -42,7 +42,7 @@ class DryRunInitialLoadExecutor(InitialLoadExecutor):
                 "metadata_file": c.metadata_file,
                 "command_type": c.command_type,
                 "command_text": c.command_text,
-                "mode": c.mode,
+                "action": c.action,
                 "reason": c.reason,
             }
             for c in commands
@@ -117,7 +117,7 @@ class FileOnlyInitialLoadExecutor(InitialLoadExecutor):
                 "metadata_file": c.metadata_file,
                 "command_type": c.command_type,
                 "command_text": c.command_text,
-                "mode": c.mode,
+                "action": c.action,
                 "reason": c.reason,
             }
             for c in commands

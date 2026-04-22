@@ -32,14 +32,14 @@
     "description": "Справочник клиентов.",
     "src_system_type": "oracle",
     "cdc": {
-      "enabled": false,
+      "enabled": true,
       "replication_mode": "INITIAL_PLUS_CDC",
       "source_system": "SOURCE_USER",
       "source_pdb": "SRCPDB",
       "target_system": "RAWDATA",
       "target_pdb": "OASIPDB",
-      "extract_group": "EXT_SRC_01",
-      "replicat_group": "REP_DDS_01",
+      "extract_group": "EXT_SRC",
+      "replicat_group": "TGT11",
       "load_method": "DATAPUMP",
       "priority": "NORMAL",
       "size_class": "SMALL"

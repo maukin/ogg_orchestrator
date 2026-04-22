@@ -27,7 +27,7 @@ class BackendCommand:
     metadata_file: str | None
     command_type: str
     command_text: str
-    mode: str
+    action: str
     reason: str | None
 
 

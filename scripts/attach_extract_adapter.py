@@ -70,7 +70,10 @@ def patch_extract(extract_name: str, payload: dict) -> requests.Response:
 
 def post_extract_command(extract_name: str, command: str) -> requests.Response:
     url = f"{get_base_url()}/services/v2/extracts/{extract_name}/command"
-    payload = {"name": command.upper()}
+    payload = {
+        "$schema": "er:command",
+        "command": command.upper(),
+    }
     return requests.post(
         url,
         auth=get_auth(),
@@ -81,23 +84,35 @@ def post_extract_command(extract_name: str, command: str) -> requests.Response:
 
 
 def restart_extract(extract_name: str, artifacts_dir: Path) -> tuple[bool, str]:
-    stop_resp = post_extract_command(extract_name, "stop")
-    write_json(
-        artifacts_dir / "attach_extract_stop_response.json",
-        {"http_status": stop_resp.status_code, "response_text": stop_resp.text},
-    )
-    if not (200 <= stop_resp.status_code < 300):
+    stop_resp = post_extract_command(extract_name, "STOP")
+    stop_payload = {
+        "http_status": stop_resp.status_code,
+        "response_text": stop_resp.text,
+    }
+    write_json(artifacts_dir / "attach_extract_stop_response.json", stop_payload)
+
+    stop_text_upper = (stop_resp.text or "").upper()
+    stop_ok = 200 <= stop_resp.status_code < 300
+    stop_not_running = "NOT CURRENTLY RUNNING" in stop_text_upper
+
+    if not stop_ok:
         return False, f"STOP failed: {stop_resp.status_code} {stop_resp.text}"
 
-    start_resp = post_extract_command(extract_name, "start")
-    write_json(
-        artifacts_dir / "attach_extract_start_response.json",
-        {"http_status": start_resp.status_code, "response_text": start_resp.text},
-    )
-    if not (200 <= start_resp.status_code < 300):
-        return False, f"START failed: {start_resp.status_code} {start_resp.text}"
+    resume_resp = post_extract_command(extract_name, "RESUME")
+    resume_payload = {
+        "http_status": resume_resp.status_code,
+        "response_text": resume_resp.text,
+    }
+    write_json(artifacts_dir / "attach_extract_resume_response.json", resume_payload)
 
-    return True, "Restart completed successfully."
+    if not (200 <= resume_resp.status_code < 300):
+        return False, f"RESUME failed: {resume_resp.status_code} {resume_resp.text}"
+
+    return True, (
+        "Restart completed successfully."
+        if not stop_not_running
+        else "Extract was not running; resume command submitted successfully."
+    )
 
 
 def main() -> int:

@@ -67,6 +67,7 @@ class DummyRegistryRepo:
         self.records[table_id].prepared_for_instantiation = True
         self.records[table_id].registration_scn = registration_scn
 
+
 class DummyEventRepo:
     def __init__(self):
         self.events = []
@@ -116,7 +117,7 @@ def test_prepare_source_moves_table_to_prepared():
         deployment_id="dep1",
         plan=plan,
         artifacts_dir=artifacts_dir,
-        mode="DRY_RUN",
+        action="APPLY",
     )
 
     assert registry_repo.records["T1"].state == TableState.PREPARED

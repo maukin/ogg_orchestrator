@@ -9,6 +9,7 @@ class InstantiationCommand:
     source_table: str
     target_schema: str
     target_table: str
+    instantiation_scn: int
     command_type: str
     command_text: str
     action: str

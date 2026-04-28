@@ -61,7 +61,7 @@ class OGGProcessBootstrapService:
             if not create_result.success:
                 return create_result
 
-            return self._wait_until_visible(
+            visible_result = self._wait_until_visible(
                 process_type="extract",
                 process_name=request.group_name,
                 endpoint="/services/v2/extracts",
@@ -71,6 +71,7 @@ class OGGProcessBootstrapService:
                 raw_output=create_result.raw_output,
                 http_status=create_result.http_status,
             )
+            return visible_result
 
         if request.group_type == "replicat":
             endpoint = "/services/v2/replicats"
@@ -110,7 +111,7 @@ class OGGProcessBootstrapService:
             if not create_result.success:
                 return create_result
 
-            return self._wait_until_visible(
+            visible_result = self._wait_until_visible(
                 process_type="replicat",
                 process_name=request.group_name,
                 endpoint="/services/v2/replicats",
@@ -120,6 +121,7 @@ class OGGProcessBootstrapService:
                 raw_output=create_result.raw_output,
                 http_status=create_result.http_status,
             )
+            return visible_result
 
         raise ValueError(f"Unsupported group_type for bootstrap: {request.group_type}")
 

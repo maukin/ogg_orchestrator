@@ -12,8 +12,6 @@ _ALLOWED_PREPARE_SOURCE_EXECUTORS = {
 }
 _ALLOWED_ATTACH_EXTRACT_EXECUTORS = {
     "DRY_RUN",
-    "OGG_REST_SKELETON",
-    "OGG_REST_REAL",
     "FILE_ONLY",
     "SCRIPT",
 }
@@ -25,17 +23,12 @@ _ALLOWED_INITIAL_LOAD_EXECUTORS = {
 _ALLOWED_INSTANTIATION_EXECUTORS = {
     "DRY_RUN",
     "FILE_ONLY",
+    "SCRIPT",
 }
 _ALLOWED_ATTACH_REPLICAT_EXECUTORS = {
     "DRY_RUN",
-    "OGG_REST_SKELETON",
-    "OGG_REST_REAL",
     "FILE_ONLY",
     "SCRIPT",
-}
-_ALLOWED_ACTIVATION_EXECUTORS = {
-    "DRY_RUN",
-    "FILE_ONLY",
 }
 
 
@@ -74,7 +67,6 @@ class AppConfig:
     attach_replicat_executor: str
 
     activation_action: str
-    activation_executor: str
 
     ogg_rest_base_url: str
     ogg_rest_username: str
@@ -86,9 +78,11 @@ class AppConfig:
     ogg_rest_connection: str
     trandata_scope: str
 
-    initial_load_script_path: str
     initial_load_script_timeout_sec: int
     initial_load_script_command: str
+
+    instantiation_script_command: str
+    instantiation_script_timeout_sec: int
 
     attach_extract_script_command: str
     attach_extract_script_timeout_sec: int
@@ -130,7 +124,6 @@ class AppConfig:
             attach_replicat_executor=os.getenv("ATTACH_REPLICAT_EXECUTOR", "DRY_RUN").upper(),
 
             activation_action=os.getenv("ACTIVATION_ACTION", "PLAN_ONLY").upper(),
-            activation_executor=os.getenv("ACTIVATION_EXECUTOR", "DRY_RUN").upper(),
 
             ogg_rest_base_url=os.getenv("OGG_REST_BASE_URL", ""),
             ogg_rest_username=os.getenv("OGG_REST_USERNAME", ""),
@@ -142,11 +135,15 @@ class AppConfig:
             ogg_rest_connection=os.getenv("OGG_REST_CONNECTION", ""),
             trandata_scope=os.getenv("TRANDATA_SCOPE", "TABLE").upper(),
 
-            initial_load_script_path=os.getenv("INITIAL_LOAD_SCRIPT_PATH", ""),
             initial_load_script_timeout_sec=int(
                 os.getenv("INITIAL_LOAD_SCRIPT_TIMEOUT_SEC", "3600")
             ),
             initial_load_script_command=os.getenv("INITIAL_LOAD_SCRIPT_COMMAND", ""),
+
+            instantiation_script_command=os.getenv("INSTANTIATION_SCRIPT_COMMAND", ""),
+            instantiation_script_timeout_sec=int(
+                os.getenv("INSTANTIATION_SCRIPT_TIMEOUT_SEC", "1800")
+            ),
 
             attach_extract_script_command=os.getenv("ATTACH_EXTRACT_SCRIPT_COMMAND", ""),
             attach_extract_script_timeout_sec=int(
@@ -199,7 +196,7 @@ class AppConfig:
         if self.attach_extract_executor not in _ALLOWED_ATTACH_EXTRACT_EXECUTORS:
             raise ValueError(
                 "ATTACH_EXTRACT_EXECUTOR must be one of: "
-                "DRY_RUN, OGG_REST_SKELETON, OGG_REST_REAL, FILE_ONLY, SCRIPT"
+                "DRY_RUN, FILE_ONLY, SCRIPT"
             )
 
         if self.initial_load_executor not in _ALLOWED_INITIAL_LOAD_EXECUTORS:
@@ -209,19 +206,15 @@ class AppConfig:
 
         if self.instantiation_executor not in _ALLOWED_INSTANTIATION_EXECUTORS:
             raise ValueError(
-                "INSTANTIATION_EXECUTOR must be one of: DRY_RUN, FILE_ONLY"
+                "INSTANTIATION_EXECUTOR must be one of: DRY_RUN, FILE_ONLY, SCRIPT"
             )
 
         if self.attach_replicat_executor not in _ALLOWED_ATTACH_REPLICAT_EXECUTORS:
             raise ValueError(
                 "ATTACH_REPLICAT_EXECUTOR must be one of: "
-                "DRY_RUN, OGG_REST_SKELETON, OGG_REST_REAL, FILE_ONLY, SCRIPT"
+                "DRY_RUN, FILE_ONLY, SCRIPT"
             )
 
-        if self.activation_executor not in _ALLOWED_ACTIVATION_EXECUTORS:
-            raise ValueError(
-                "ACTIVATION_EXECUTOR must be one of: DRY_RUN, FILE_ONLY"
-            )
 
         if self.ogg_rest_mode not in {"OGG_REST_SKELETON", "OGG_REST_REAL"}:
             raise ValueError(
@@ -252,4 +245,9 @@ class AppConfig:
         if self.attach_replicat_executor == "SCRIPT" and not self.attach_replicat_script_command:
             raise ValueError(
                 "ATTACH_REPLICAT_SCRIPT_COMMAND is required when ATTACH_REPLICAT_EXECUTOR=SCRIPT"
+            )
+
+        if self.instantiation_executor == "SCRIPT" and not self.instantiation_script_command:
+            raise ValueError(
+                "INSTANTIATION_SCRIPT_COMMAND is required when INSTANTIATION_EXECUTOR=SCRIPT"
             )

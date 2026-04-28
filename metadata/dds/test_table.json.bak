@@ -38,8 +38,8 @@
       "source_pdb": "SRCPDB",
       "target_system": "RAWDATA",
       "target_pdb": "OASIPDB",
-      "extract_group": "EXT99",
-      "replicat_group": "REP99",
+      "extract_group": "EXT001",
+      "replicat_group": "TGT001",
       "load_method": "DATAPUMP",
       "priority": "NORMAL",
       "size_class": "SMALL"

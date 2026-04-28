@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.executors.activation_executor import ActivationExecutor
 from app.models.activation import ActivationCommand
 from app.models.deployment import DeploymentPlan
 from app.models.enums import EventStatus, EventType, TableState, ValidationStatus
@@ -23,13 +22,11 @@ class ActivationService:
         registry_repo: RegistryRepository,
         event_repo: EventRepository,
         state_machine: StateMachineService,
-        executor: ActivationExecutor,
         step_policy: StepExecutionPolicyService,
     ):
         self.registry_repo = registry_repo
         self.event_repo = event_repo
         self.state_machine = state_machine
-        self.executor = executor
         self.step_policy = step_policy
 
     def run_activation(
@@ -114,14 +111,112 @@ class ActivationService:
         if not commands:
             return None
 
-        result = self._execute(commands=commands, artifacts_dir=artifacts_dir)
+        if action == "PLAN_ONLY":
+            return ExecutorResult(
+                success=True,
+                executed_count=0,
+                skipped_count=len(commands),
+                raw_output="Activation plan built successfully.",
+            )
 
-        if result.success is False:
+        if action != "APPLY":
+            return ExecutorResult(
+                success=False,
+                executed_count=0,
+                skipped_count=0,
+                raw_output=None,
+                error_code="UNSUPPORTED_ACTION",
+                error_message=f"Unsupported activation action: {action}",
+            )
+
+        try:
+            for table_id in target_table_ids:
+                record = self.registry_repo.get_by_table_id(table_id)
+                if record is None:
+                    continue
+                if record.state != TableState.CDC_APPLY_ATTACHED:
+                    continue
+
+                self.registry_repo.update_validation_status(
+                    table_id=table_id,
+                    validation_status=ValidationStatus.PASSED,
+                    deployment_id=deployment_id,
+                )
+
+                self.event_repo.add_event(
+                    TableEvent(
+                        table_id=table_id,
+                        deployment_id=deployment_id,
+                        event_type=EventType.VALIDATION_PASSED,
+                        event_status=EventStatus.SUCCESS,
+                        step_name="activation_validation",
+                        event_ts=None,
+                        payload_json=json.dumps(
+                            {
+                                "action": action,
+                                "validation_result": "PASSED",
+                                "validation_status": ValidationStatus.PASSED.value,
+                            },
+                            ensure_ascii=False,
+                        ),
+                        error_code=None,
+                        error_message=None,
+                        created_by=None,
+                    )
+                )
+
+                self.state_machine.ensure_transition_allowed(
+                    TableState.CDC_APPLY_ATTACHED,
+                    TableState.ACTIVE,
+                )
+                self.registry_repo.mark_activated(
+                    table_id=table_id,
+                    deployment_id=deployment_id,
+                )
+
+                cmd = next((c for c in commands if c.table_id == table_id), None)
+                if cmd is None:
+                    continue
+
+                self.event_repo.add_event(
+                    TableEvent(
+                        table_id=table_id,
+                        deployment_id=deployment_id,
+                        event_type=EventType.TABLE_ACTIVATED,
+                        event_status=EventStatus.SUCCESS,
+                        step_name="activation",
+                        event_ts=None,
+                        payload_json=json.dumps(
+                            {
+                                "command_type": cmd.command_type,
+                                "command_text": cmd.command_text,
+                                "action": cmd.action,
+                                "reason": cmd.reason,
+                                "new_state": TableState.ACTIVE.value,
+                                "validation_status": ValidationStatus.PASSED.value,
+                            },
+                            ensure_ascii=False,
+                        ),
+                        error_code=None,
+                        error_message=None,
+                        created_by=None,
+                    )
+                )
+
+            return ExecutorResult(
+                success=True,
+                executed_count=len(commands),
+                skipped_count=0,
+                raw_output="Activation completed successfully.",
+            )
+
+        except Exception as exc:
             self._mark_validation_failed(
                 deployment_id=deployment_id,
                 table_ids=target_table_ids,
                 action=action,
-                result=result,
+                error_code="ACTIVATION_EXCEPTION",
+                error_message=str(exc),
             )
             mark_tables_step_error(
                 registry_repo=self.registry_repo,
@@ -129,127 +224,25 @@ class ActivationService:
                 table_ids=target_table_ids,
                 deployment_id=deployment_id,
                 step_name="activation",
-                error_code=result.error_code,
-                error_message=result.error_message or "Activation executor failed.",
+                error_code="ACTIVATION_EXCEPTION",
+                error_message=str(exc),
             )
-            return result
-
-        if action == "PLAN_ONLY":
-            return result
-
-        if action != "APPLY":
-            raise ValueError(f"Unsupported activation action: {action}")
-
-        for table_id in target_table_ids:
-            record = self.registry_repo.get_by_table_id(table_id)
-            if record is None:
-                continue
-            if record.state != TableState.CDC_APPLY_ATTACHED:
-                continue
-
-            self.registry_repo.update_validation_status(
-                table_id=table_id,
-                validation_status=ValidationStatus.PASSED,
-                deployment_id=deployment_id,
-            )
-
-            self.event_repo.add_event(
-                TableEvent(
-                    table_id=table_id,
-                    deployment_id=deployment_id,
-                    event_type=EventType.VALIDATION_PASSED,
-                    event_status=EventStatus.SUCCESS,
-                    step_name="activation_validation",
-                    event_ts=None,
-                    payload_json=json.dumps(
-                        {
-                            "action": action,
-                            "validation_result": "PASSED",
-                            "validation_status": ValidationStatus.PASSED.value,
-                        },
-                        ensure_ascii=False,
-                    ),
-                    error_code=None,
-                    error_message=None,
-                    created_by=None,
-                )
-            )
-
-            self.state_machine.ensure_transition_allowed(
-                TableState.CDC_APPLY_ATTACHED,
-                TableState.ACTIVE,
-            )
-            self.registry_repo.mark_activated(
-                table_id=table_id,
-                deployment_id=deployment_id,
-            )
-
-            cmd = next((c for c in commands if c.table_id == table_id), None)
-            if cmd is None:
-                continue
-
-            self.event_repo.add_event(
-                TableEvent(
-                    table_id=table_id,
-                    deployment_id=deployment_id,
-                    event_type=EventType.TABLE_ACTIVATED,
-                    event_status=EventStatus.SUCCESS,
-                    step_name="activation",
-                    event_ts=None,
-                    payload_json=json.dumps(
-                        {
-                            "command_type": cmd.command_type,
-                            "command_text": cmd.command_text,
-                            "action": cmd.action,
-                            "reason": cmd.reason,
-                            "new_state": TableState.ACTIVE.value,
-                            "validation_status": ValidationStatus.PASSED.value,
-                        },
-                        ensure_ascii=False,
-                    ),
-                    error_code=None,
-                    error_message=None,
-                    created_by=None,
-                )
-            )
-
-        return result
-
-    def _execute(
-        self,
-        commands: list[ActivationCommand],
-        artifacts_dir: str | Path,
-    ) -> ExecutorResult:
-        try:
-            result = self.executor.execute(commands=commands, artifacts_dir=artifacts_dir)
-        except Exception as exc:
             return ExecutorResult(
                 success=False,
                 executed_count=0,
                 skipped_count=0,
                 raw_output=None,
-                error_code="EXECUTOR_EXCEPTION",
+                error_code="ACTIVATION_EXCEPTION",
                 error_message=str(exc),
             )
-
-        if isinstance(result, ExecutorResult):
-            return result
-
-        return ExecutorResult(
-            success=False,
-            executed_count=0,
-            skipped_count=0,
-            raw_output=None,
-            error_code="EXECUTOR_NO_RESULT",
-            error_message="Activation executor returned no structured result.",
-        )
 
     def _mark_validation_failed(
         self,
         deployment_id: str,
         table_ids: list[str],
         action: str,
-        result: ExecutorResult,
+        error_code: str | None,
+        error_message: str | None,
     ) -> None:
         for table_id in table_ids:
             record = self.registry_repo.get_by_table_id(table_id)
@@ -275,13 +268,13 @@ class ActivationService:
                             "action": action,
                             "validation_result": "FAILED",
                             "validation_status": ValidationStatus.FAILED.value,
-                            "error_code": result.error_code,
-                            "error_message": result.error_message,
+                            "error_code": error_code,
+                            "error_message": error_message,
                         },
                         ensure_ascii=False,
                     ),
-                    error_code=result.error_code,
-                    error_message=result.error_message,
+                    error_code=error_code,
+                    error_message=error_message,
                     created_by=None,
                 )
             )

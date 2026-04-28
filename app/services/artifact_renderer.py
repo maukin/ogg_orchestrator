@@ -257,13 +257,13 @@ class ArtifactRenderer:
         )
 
     def render_cdc_config_bundle(
-        self,
-        bundle,
-        output_dir: str | Path,
+            self,
+            bundle,
+            output_dir: str | Path,
     ) -> None:
         out = Path(output_dir)
-        extract_dir = out / "cdc" / "extract"
-        replicat_dir = out / "cdc" / "replicat"
+        extract_dir = out / "cdc" / "extract" / "generated"
+        replicat_dir = out / "cdc" / "replicat" / "generated"
 
         extract_dir.mkdir(parents=True, exist_ok=True)
         replicat_dir.mkdir(parents=True, exist_ok=True)

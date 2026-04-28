@@ -278,3 +278,114 @@ class OGGRestClient:
             error_code=None,
             error_message=None,
         )
+
+    def execute_process_command(
+        self,
+        *,
+        process_type: str,
+        process_name: str,
+        command: str,
+        artifacts_dir: str | Path,
+        artifact_prefix: str,
+    ) -> ExecutorResult:
+        endpoint_type = process_type.lower()
+        if endpoint_type not in {"extract", "replicat"}:
+            raise ValueError(f"Unsupported process_type: {process_type}")
+
+        endpoint = f"/services/v2/{endpoint_type}s/{process_name}/command"
+        request_data = {
+            "base_url": self.config.base_url,
+            "deployment_name": self.config.deployment_name,
+            "method": "POST",
+            "endpoint": endpoint,
+            "verify_ssl": self.config.verify_ssl,
+            "mode": self.config.mode,
+            "process_type": process_type,
+            "process_name": process_name,
+            "payload": {
+                "$schema": "er:command",
+                "command": command.upper(),
+            },
+        }
+
+        request_artifact = self.write_json_artifact(
+            data=request_data,
+            artifacts_dir=artifacts_dir,
+            filename=f"{artifact_prefix}_request.json",
+        )
+
+        if self.config.mode == "OGG_REST_SKELETON":
+            response_data = {
+                "process_type": process_type,
+                "process_name": process_name,
+                "command": command.upper(),
+                "http_executed": False,
+                "http_status": None,
+                "success": True,
+                "message": "Skeleton mode: process command artifact generated, no HTTP call executed.",
+            }
+            response_artifact = self.write_json_artifact(
+                data=response_data,
+                artifacts_dir=artifacts_dir,
+                filename=f"{artifact_prefix}_response.json",
+            )
+            return ExecutorResult(
+                success=True,
+                executed_count=1,
+                skipped_count=0,
+                raw_output=response_data["message"],
+                error_code=None,
+                error_message=None,
+                http_status=None,
+                request_artifact=request_artifact,
+                response_artifact=response_artifact,
+            )
+
+        url = f"{self.config.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+        response = requests.post(
+            url=url,
+            auth=(self.config.username, self.config.password),
+            json=request_data["payload"],
+            verify=self.config.verify_ssl,
+            timeout=30,
+        )
+
+        response_data = {
+            "process_type": process_type,
+            "process_name": process_name,
+            "command": command.upper(),
+            "http_executed": True,
+            "http_status": response.status_code,
+            "success": 200 <= response.status_code < 300,
+            "response_text": response.text,
+        }
+        response_artifact = self.write_json_artifact(
+            data=response_data,
+            artifacts_dir=artifacts_dir,
+            filename=f"{artifact_prefix}_response.json",
+        )
+
+        if 200 <= response.status_code < 300:
+            return ExecutorResult(
+                success=True,
+                executed_count=1,
+                skipped_count=0,
+                raw_output=response.text,
+                error_code=None,
+                error_message=None,
+                http_status=response.status_code,
+                request_artifact=request_artifact,
+                response_artifact=response_artifact,
+            )
+
+        return ExecutorResult(
+            success=False,
+            executed_count=0,
+            skipped_count=0,
+            raw_output=response.text,
+            error_code=str(response.status_code),
+            error_message=f"OGG REST process command failed: {response.status_code}",
+            http_status=response.status_code,
+            request_artifact=request_artifact,
+            response_artifact=response_artifact,
+        )

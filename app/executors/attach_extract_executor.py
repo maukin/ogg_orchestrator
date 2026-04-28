@@ -16,6 +16,10 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _debug(msg: str) -> None:
+    print(f"[attach_extract_executor] {msg}", flush=True)
+
+
 class AttachExtractExecutor(ABC):
     @abstractmethod
     def execute(
@@ -38,6 +42,16 @@ class FileOnlyAttachExtractExecutor(AttachExtractExecutor):
         request_path = out_dir / "attach_extract_request.json"
         response_path = out_dir / "attach_extract_response.json"
 
+        _debug(f"file-only execute started, commands_count={len(commands)}, artifacts_dir={out_dir}")
+        for idx, c in enumerate(commands, start=1):
+            _debug(
+                f"command[{idx}] table_id={c.table_id}, "
+                f"source={c.source_schema}.{c.source_table}, "
+                f"extract_group={c.extract_group}, "
+                f"fragment_path={c.fragment_path}, "
+                f"action={c.action}, reason={c.reason}"
+            )
+
         payload = {
             "commands": [
                 {
@@ -59,6 +73,7 @@ class FileOnlyAttachExtractExecutor(AttachExtractExecutor):
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        _debug(f"request written to {request_path}")
 
         now = _utc_now()
         group_name = commands[0].extract_group if commands else None
@@ -79,6 +94,7 @@ class FileOnlyAttachExtractExecutor(AttachExtractExecutor):
             json.dumps(result_payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        _debug(f"response written to {response_path}")
 
         return AttachExtractExecutionResult(
             success=True,
@@ -114,6 +130,17 @@ class ScriptAttachExtractExecutor(AttachExtractExecutor):
         stdout_path = out_dir / "attach_extract_stdout.log"
         stderr_path = out_dir / "attach_extract_stderr.log"
 
+        _debug(f"script execute started, commands_count={len(commands)}, artifacts_dir={out_dir}")
+        for idx, c in enumerate(commands, start=1):
+            _debug(
+                f"command[{idx}] table_id={c.table_id}, "
+                f"source={c.source_schema}.{c.source_table}, "
+                f"extract_group={c.extract_group}, "
+                f"fragment_path={c.fragment_path}, "
+                f"command_type={c.command_type}, "
+                f"action={c.action}, reason={c.reason}"
+            )
+
         payload = {
             "commands": [
                 {
@@ -134,14 +161,23 @@ class ScriptAttachExtractExecutor(AttachExtractExecutor):
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        _debug(f"request written to {request_path}")
 
         rendered = self.script_command.format(
             request=str(request_path),
             response=str(response_path),
         )
 
+        _debug(f"script_command template={self.script_command}")
+        _debug(f"rendered command={rendered}")
+        _debug(f"timeout_sec={self.timeout_sec}")
+        _debug(f"response_path={response_path}")
+        _debug(f"stdout_path={stdout_path}")
+        _debug(f"stderr_path={stderr_path}")
+
         try:
             if os.name == "nt":
+                _debug("running subprocess on Windows with shell=True")
                 process = subprocess.run(
                     rendered,
                     capture_output=True,
@@ -152,6 +188,7 @@ class ScriptAttachExtractExecutor(AttachExtractExecutor):
                 )
             else:
                 argv = shlex.split(rendered, posix=True)
+                _debug(f"running subprocess on POSIX argv={argv}")
                 process = subprocess.run(
                     argv,
                     capture_output=True,
@@ -160,6 +197,7 @@ class ScriptAttachExtractExecutor(AttachExtractExecutor):
                     check=False,
                 )
         except subprocess.TimeoutExpired as exc:
+            _debug(f"script timeout after {self.timeout_sec} seconds")
             stdout_path.write_text(exc.stdout or "", encoding="utf-8")
             stderr_path.write_text(exc.stderr or "", encoding="utf-8")
             return AttachExtractExecutionResult(
@@ -177,6 +215,7 @@ class ScriptAttachExtractExecutor(AttachExtractExecutor):
                 response_artifact=str(response_path) if response_path.exists() else None,
             )
         except FileNotFoundError as exc:
+            _debug(f"script executable not found: {exc}")
             stdout_path.write_text("", encoding="utf-8")
             stderr_path.write_text(str(exc), encoding="utf-8")
             return AttachExtractExecutionResult(
@@ -197,7 +236,18 @@ class ScriptAttachExtractExecutor(AttachExtractExecutor):
         stdout_path.write_text(process.stdout or "", encoding="utf-8")
         stderr_path.write_text(process.stderr or "", encoding="utf-8")
 
+        _debug(f"process finished with returncode={process.returncode}")
+        if process.stdout:
+            _debug(f"stdout:\n{process.stdout}")
+        else:
+            _debug("stdout is empty")
+        if process.stderr:
+            _debug(f"stderr:\n{process.stderr}")
+        else:
+            _debug("stderr is empty")
+
         if process.returncode != 0:
+            _debug("script returned non-zero exit code")
             return AttachExtractExecutionResult(
                 success=False,
                 executed_count=0,
@@ -214,6 +264,7 @@ class ScriptAttachExtractExecutor(AttachExtractExecutor):
             )
 
         if not response_path.exists():
+            _debug("response file is missing after successful script completion")
             return AttachExtractExecutionResult(
                 success=False,
                 executed_count=0,
@@ -229,7 +280,21 @@ class ScriptAttachExtractExecutor(AttachExtractExecutor):
                 response_artifact=None,
             )
 
+        _debug(f"response file found: {response_path}")
         response_payload = json.loads(response_path.read_text(encoding="utf-8"))
+        _debug(
+            "response payload summary: "
+            f"success={response_payload.get('success')}, "
+            f"executed_count={response_payload.get('executed_count')}, "
+            f"skipped_count={response_payload.get('skipped_count')}, "
+            f"group_name={response_payload.get('group_name')}, "
+            f"applied_tables_count={response_payload.get('applied_tables_count')}, "
+            f"error_code={response_payload.get('error_code')}, "
+            f"error_message={response_payload.get('error_message')}, "
+            f"restart_performed={response_payload.get('restart_performed')}, "
+            f"rollback_performed={response_payload.get('rollback_performed')}"
+        )
+
         return AttachExtractExecutionResult(
             success=bool(response_payload.get("success")),
             executed_count=int(response_payload.get("executed_count", 0)),

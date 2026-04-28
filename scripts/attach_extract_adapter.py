@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +32,17 @@ def read_text(path: Path) -> str:
 def write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def write_lines(path: Path, lines: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    normalized = [str(line).rstrip() for line in lines if str(line).strip()]
+    text = "\n".join(normalized).strip()
+    path.write_text(text + ("\n" if text else ""), encoding="utf-8")
+
+
+def ensure_parent(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
 
 
 def get_auth() -> tuple[str, str]:
@@ -115,6 +127,16 @@ def restart_extract(extract_name: str, artifacts_dir: Path) -> tuple[bool, str]:
     )
 
 
+def copy_fragment_to_generated(fragment_path: Path, generated_dir: Path) -> Path:
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    target_path = generated_dir / fragment_path.name
+
+    if fragment_path.resolve() != target_path.resolve():
+        shutil.copy2(fragment_path, target_path)
+
+    return target_path
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("Usage: python scripts/attach_extract_adapter.py <request.json> <response.json>")
@@ -123,7 +145,12 @@ def main() -> int:
     request_path = Path(sys.argv[1])
     response_path = Path(sys.argv[2])
     artifacts_dir = response_path.parent
-    backup_dir = artifacts_dir / "cdc" / "extract"
+
+    cdc_extract_dir = artifacts_dir / "cdc" / "extract"
+    generated_dir = cdc_extract_dir / "generated"
+    backup_dir = cdc_extract_dir / "backup"
+    before_dir = cdc_extract_dir / "effective_before"
+    after_dir = cdc_extract_dir / "effective_after"
 
     request_payload = json.loads(read_text(request_path))
     commands = request_payload.get("commands", [])
@@ -153,6 +180,7 @@ def main() -> int:
         group_name = commands[0]["extract_group"]
 
         before_doc = fetch_extract(group_name)
+
         write_json(
             backup_dir / f"{group_name}_{timestamp_for_file()}_backup.json",
             before_doc,
@@ -162,6 +190,9 @@ def main() -> int:
         before_cfg = list(before_doc.get("response", {}).get("config", []))
         if not before_cfg:
             raise RuntimeError(f"Extract {group_name} returned empty config.")
+
+        write_lines(before_dir / f"{group_name}.prm", before_cfg)
+        write_json(before_dir / f"{group_name}.json", before_doc)
 
         current_cfg = list(before_cfg)
         current_set = {line.strip() for line in current_cfg if str(line).strip()}
@@ -174,9 +205,11 @@ def main() -> int:
             if not fragment_path.exists():
                 raise RuntimeError(f"Extract fragment file not found: {fragment_path}")
 
-            fragment_lines = normalize_fragment_lines(read_text(fragment_path))
+            generated_fragment_path = copy_fragment_to_generated(fragment_path, generated_dir)
+
+            fragment_lines = normalize_fragment_lines(read_text(generated_fragment_path))
             if not fragment_lines:
-                raise RuntimeError(f"Extract fragment is empty: {fragment_path}")
+                raise RuntimeError(f"Extract fragment is empty: {generated_fragment_path}")
 
             for line in fragment_lines:
                 if line not in current_set:
@@ -186,6 +219,16 @@ def main() -> int:
                     total_applied += 1
 
         if not changed:
+            write_lines(after_dir / f"{group_name}.prm", current_cfg)
+            write_json(
+                after_dir / f"{group_name}.json",
+                {
+                    "group_name": group_name,
+                    "config": current_cfg,
+                    "note": "No changes applied; effective_after equals effective_before.",
+                },
+            )
+
             write_json(
                 response_path,
                 {
@@ -257,6 +300,10 @@ def main() -> int:
 
         after_doc = fetch_extract(group_name)
         write_json(artifacts_dir / "attach_extract_after.json", after_doc)
+
+        after_cfg = list(after_doc.get("response", {}).get("config", []))
+        write_lines(after_dir / f"{group_name}.prm", after_cfg)
+        write_json(after_dir / f"{group_name}.json", after_doc)
 
         write_json(
             response_path,

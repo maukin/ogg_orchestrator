@@ -87,6 +87,23 @@ class DeploymentOrchestrator:
         self.group_bootstrap_planner_service = group_bootstrap_planner_service
         self.group_bootstrap_service = group_bootstrap_service
 
+    def _raise_if_step_failed(self, step_name: str, result: object | None) -> None:
+        if result is None:
+            return
+
+        if getattr(result, "success", None) is False:
+            error_code = getattr(result, "error_code", None)
+            error_message = getattr(result, "error_message", None)
+            print(
+                f"[orchestrator] step failed: {step_name}, "
+                f"error_code={error_code}, error_message={error_message}",
+                flush=True,
+            )
+            raise RuntimeError(
+                f"{step_name} failed: "
+                f"error_code={error_code}, error_message={error_message}"
+            )
+
     def _run_group_bootstrap_actions(
         self,
         bootstrap_actions: list,
@@ -148,8 +165,6 @@ class DeploymentOrchestrator:
         extract_probe_results: dict[str, object] = {}
         replicat_probe_results: dict[str, object] = {}
 
-        # 1. Мягкая валидация: проверяем обязательность полей и capacity,
-        # но не падаем из-за отсутствующих групп.
         self.grouping_service.validate_desired_groups(
             desired_configs=desired_configs,
             current_registry=current_registry,
@@ -157,7 +172,6 @@ class DeploymentOrchestrator:
             strict_existing_groups=False,
         )
 
-        # 2. Ищем отсутствующие группы
         bootstrap_actions = []
         if self.group_bootstrap_planner_service is not None:
             bootstrap_actions = self.group_bootstrap_planner_service.build_bootstrap_actions(
@@ -166,7 +180,6 @@ class DeploymentOrchestrator:
                 available_groups=available_groups,
             )
 
-        # 3. Выполняем bootstrap, если есть что создавать
         if bootstrap_actions:
             if artifacts_dir is None:
                 raise ValueError(
@@ -177,11 +190,8 @@ class DeploymentOrchestrator:
                 artifacts_dir=artifacts_dir,
                 step_results=step_results,
             )
-
-            # перечитать группы после bootstrap
             available_groups = self.group_repo.list_active_groups(environment_name)
 
-        # 4. Строгая валидация: теперь группы уже должны существовать
         self.grouping_service.validate_desired_groups(
             desired_configs=desired_configs,
             current_registry=current_registry,
@@ -214,7 +224,17 @@ class DeploymentOrchestrator:
                 output_dir=artifacts_dir,
             )
 
-            cdc_bundle = self.cdc_config_render_service.build_bundle(desired_configs)
+            registry_records = [
+                self.registry_repo.get_by_table_id(cfg.table_id)
+                for cfg in desired_configs
+            ]
+            registry_records = [r for r in registry_records if r is not None]
+
+            cdc_bundle = self.cdc_config_render_service.build_bundle(
+                desired_configs=desired_configs,
+                registry_records=registry_records,
+            )
+
             self.artifact_renderer.render_cdc_config_bundle(
                 bundle=cdc_bundle,
                 output_dir=artifacts_dir,
@@ -245,6 +265,7 @@ class DeploymentOrchestrator:
                 action=prepare_source_action,
             )
             step_results.append(("prepare_source", prepare_result))
+            self._raise_if_step_failed("prepare_source", prepare_result)
 
         if artifacts_dir is not None and self.extract_status_probe_service is not None:
             extract_groups = sorted(
@@ -331,6 +352,7 @@ class DeploymentOrchestrator:
                 action=attach_extract_action,
             )
             step_results.append(("attach_extract", extract_result))
+            self._raise_if_step_failed("attach_extract", extract_result)
 
         if artifacts_dir is not None and self.initial_load_service is not None:
             initial_load_result = self.initial_load_service.run_initial_load(
@@ -340,6 +362,7 @@ class DeploymentOrchestrator:
                 action=initial_load_action,
             )
             step_results.append(("initial_load", initial_load_result))
+            self._raise_if_step_failed("initial_load", initial_load_result)
 
         if artifacts_dir is not None and self.instantiation_service is not None:
             instantiation_result = self.instantiation_service.run_instantiation(
@@ -349,6 +372,7 @@ class DeploymentOrchestrator:
                 action=instantiation_action,
             )
             step_results.append(("instantiation", instantiation_result))
+            self._raise_if_step_failed("instantiation", instantiation_result)
 
         if artifacts_dir is not None and self.replicat_status_probe_service is not None:
             replicat_groups = sorted(
@@ -437,6 +461,7 @@ class DeploymentOrchestrator:
                 action=attach_replicat_action,
             )
             step_results.append(("attach_replicat", replicat_result))
+            self._raise_if_step_failed("attach_replicat", replicat_result)
 
         if artifacts_dir is not None and self.activation_service is not None:
             activation_result = self.activation_service.run_activation(
@@ -446,6 +471,7 @@ class DeploymentOrchestrator:
                 action=activation_action,
             )
             step_results.append(("activation", activation_result))
+            self._raise_if_step_failed("activation", activation_result)
 
         if artifacts_dir is not None:
             status_report = self.rerun_analysis_service.build_report(

@@ -18,7 +18,7 @@ class ReplicatBaseConfigParams:
     credential_alias: str
     batchsql: bool = True
     getupdatebefores: bool = True
-    insertallrecords: bool = False
+    insertallrecords: bool = True
 
 
 class OGGBaseConfigFactory:

@@ -79,12 +79,18 @@ class InstantiationService:
             if isinstance(plan_action.payload, dict):
                 reason = plan_action.payload.get("reason")
 
+            instantiation_scn = resolve_instantiation_scn(
+                registration_scn=record.registration_scn,
+                instantiation_candidate_scn=record.instantiation_candidate_scn,
+            )
+
             command = self._build_instantiation_command(
                 table_id=record.table_id,
                 source_schema=record.source_schema,
                 source_table=record.source_table,
                 target_schema=record.target_schema,
                 target_table=record.target_table,
+                instantiation_scn=instantiation_scn,
                 action=action,
                 reason=reason,
             )
@@ -131,15 +137,10 @@ class InstantiationService:
             if action_type != PLAN_CDC_ONLY and record.state != TableState.INITIAL_LOAD_DONE:
                 continue
 
-            instantiation_scn = resolve_instantiation_scn(
-                registration_scn=record.registration_scn,
-                instantiation_candidate_scn=record.instantiation_candidate_scn,
-            )
-
             self.registry_repo.record_instantiation(
                 table_id=table_id,
                 deployment_id=deployment_id,
-                instantiation_scn=instantiation_scn,
+                instantiation_scn=cmd.instantiation_scn,
             )
 
             self.state_machine.ensure_transition_allowed(
@@ -167,7 +168,7 @@ class InstantiationService:
                             "action": cmd.action,
                             "reason": cmd.reason,
                             "new_state": TableState.INSTANTIATED.value,
-                            "instantiation_scn": instantiation_scn,
+                            "instantiation_scn": cmd.instantiation_scn,
                         },
                         ensure_ascii=False,
                     ),
@@ -210,17 +211,19 @@ class InstantiationService:
 
     @staticmethod
     def _build_instantiation_command(
+        *,
         table_id: str,
         source_schema: str,
         source_table: str,
         target_schema: str,
         target_table: str,
+        instantiation_scn: int,
         action: str,
         reason: str | None,
     ) -> InstantiationCommand:
         command_text = (
-            f"RECORD INSTANTIATION FOR {source_schema}.{source_table} "
-            f"-> {target_schema}.{target_table}"
+            f"SET INSTANTIATION SCN {instantiation_scn} "
+            f"FOR {source_schema}.{source_table} -> {target_schema}.{target_table}"
         )
         return InstantiationCommand(
             table_id=table_id,
@@ -228,6 +231,7 @@ class InstantiationService:
             source_table=source_table,
             target_schema=target_schema,
             target_table=target_table,
+            instantiation_scn=instantiation_scn,
             command_type="RECORD_INSTANTIATION",
             command_text=command_text,
             action=action,

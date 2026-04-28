@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +33,13 @@ def read_text(path: Path) -> str:
 def write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def write_lines(path: Path, lines: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    normalized = [str(line).rstrip() for line in lines if str(line).strip()]
+    text = "\n".join(normalized).strip()
+    path.write_text(text + ("\n" if text else ""), encoding="utf-8")
 
 
 def get_auth() -> tuple[str, str]:
@@ -114,6 +123,81 @@ def restart_replicat(replicat_name: str, artifacts_dir: Path) -> tuple[bool, str
         else "Replicat was not running; resume command submitted successfully."
     )
 
+
+def copy_fragment_to_generated(fragment_path: Path, generated_dir: Path) -> Path:
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    target_path = generated_dir / fragment_path.name
+
+    if fragment_path.resolve() != target_path.resolve():
+        shutil.copy2(fragment_path, target_path)
+
+    return target_path
+
+
+def _extract_map_key(line: str) -> tuple[str, str] | None:
+    """
+    Returns:
+        (source_schema.table, target_schema.table)
+    for lines like:
+        MAP SRC.T1, TARGET TGT.T1;
+        MAP SRC.T1, TARGET TGT.T1, FILTER (...);
+    """
+    pattern = re.compile(
+        r"^\s*MAP\s+([A-Za-z0-9_]+\.[A-Za-z0-9_]+)\s*,\s*TARGET\s+([A-Za-z0-9_]+\.[A-Za-z0-9_]+)",
+        re.IGNORECASE,
+    )
+    match = pattern.match(line.strip())
+    if not match:
+        return None
+    return match.group(1).upper(), match.group(2).upper()
+
+
+def _replace_replicat_map_lines(
+    current_cfg: list[str],
+    fragment_lines: list[str],
+) -> tuple[list[str], int, bool]:
+    """
+    Replaces existing MAP entries for the same source/target with the fragment lines.
+    Returns:
+        (new_config, applied_count, changed)
+    """
+    fragment_keys: dict[tuple[str, str], str] = {}
+
+    for line in fragment_lines:
+        key = _extract_map_key(line)
+        if key is None:
+            raise RuntimeError(f"Unsupported replicat fragment line, expected MAP ... TARGET ...: {line}")
+        fragment_keys[key] = line
+
+    new_cfg: list[str] = []
+    replaced_keys: set[tuple[str, str]] = set()
+    changed = False
+
+    for line in current_cfg:
+        key = _extract_map_key(line)
+        if key is not None and key in fragment_keys:
+            if key not in replaced_keys:
+                new_line = fragment_keys[key]
+                new_cfg.append(new_line)
+                replaced_keys.add(key)
+                if line.strip() != new_line.strip():
+                    changed = True
+            else:
+                changed = True
+            continue
+
+        new_cfg.append(line)
+
+    for key, line in fragment_keys.items():
+        if key not in replaced_keys:
+            new_cfg.append(line)
+            replaced_keys.add(key)
+            changed = True
+
+    applied_count = len(fragment_lines)
+    return new_cfg, applied_count, changed
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("Usage: python scripts/attach_replicat_adapter.py <request.json> <response.json>")
@@ -122,7 +206,12 @@ def main() -> int:
     request_path = Path(sys.argv[1])
     response_path = Path(sys.argv[2])
     artifacts_dir = response_path.parent
-    backup_dir = artifacts_dir / "cdc" / "replicat"
+
+    cdc_replicat_dir = artifacts_dir / "cdc" / "replicat"
+    generated_dir = cdc_replicat_dir / "generated"
+    backup_dir = cdc_replicat_dir / "backup"
+    before_dir = cdc_replicat_dir / "effective_before"
+    after_dir = cdc_replicat_dir / "effective_after"
 
     request_payload = json.loads(read_text(request_path))
     commands = request_payload.get("commands", [])
@@ -162,9 +251,10 @@ def main() -> int:
         if not before_cfg:
             raise RuntimeError(f"Replicat {group_name} returned empty config.")
 
-        current_cfg = list(before_cfg)
-        current_set = {line.strip() for line in current_cfg if str(line).strip()}
+        write_lines(before_dir / f"{group_name}.prm", before_cfg)
+        write_json(before_dir / f"{group_name}.json", before_doc)
 
+        current_cfg = list(before_cfg)
         total_applied = 0
         changed = False
 
@@ -173,18 +263,30 @@ def main() -> int:
             if not fragment_path.exists():
                 raise RuntimeError(f"Replicat fragment file not found: {fragment_path}")
 
-            fragment_lines = normalize_fragment_lines(read_text(fragment_path))
-            if not fragment_lines:
-                raise RuntimeError(f"Replicat fragment is empty: {fragment_path}")
+            generated_fragment_path = copy_fragment_to_generated(fragment_path, generated_dir)
 
-            for line in fragment_lines:
-                if line not in current_set:
-                    current_cfg.append(line)
-                    current_set.add(line)
-                    changed = True
-                    total_applied += 1
+            fragment_lines = normalize_fragment_lines(read_text(generated_fragment_path))
+            if not fragment_lines:
+                raise RuntimeError(f"Replicat fragment is empty: {generated_fragment_path}")
+
+            current_cfg, applied_count, this_changed = _replace_replicat_map_lines(
+                current_cfg=current_cfg,
+                fragment_lines=fragment_lines,
+            )
+            total_applied += applied_count
+            changed = changed or this_changed
 
         if not changed:
+            write_lines(after_dir / f"{group_name}.prm", current_cfg)
+            write_json(
+                after_dir / f"{group_name}.json",
+                {
+                    "group_name": group_name,
+                    "config": current_cfg,
+                    "note": "No changes applied; effective_after equals effective_before.",
+                },
+            )
+
             write_json(
                 response_path,
                 {
@@ -195,7 +297,7 @@ def main() -> int:
                     "applied_tables_count": 0,
                     "started_at": started_at,
                     "finished_at": utc_now(),
-                    "raw_output": "All replicat rules already present. No changes applied.",
+                    "raw_output": "All replicat rules already present in the desired form. No changes applied.",
                     "error_code": None,
                     "error_message": None,
                     "restart_performed": False,
@@ -256,6 +358,10 @@ def main() -> int:
 
         after_doc = fetch_replicat(group_name)
         write_json(artifacts_dir / "attach_replicat_after.json", after_doc)
+
+        after_cfg = list(after_doc.get("response", {}).get("config", []))
+        write_lines(after_dir / f"{group_name}.prm", after_cfg)
+        write_json(after_dir / f"{group_name}.json", after_doc)
 
         write_json(
             response_path,
